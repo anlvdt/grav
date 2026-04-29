@@ -13,9 +13,9 @@
   --card: var(--vscode-sideBar-background, #252526);
   --border: var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
   --border-light: var(--vscode-focusBorder, rgba(255, 255, 255, 0.2));
-  --text-primary: #d4d4d4;
-  --text-secondary: #c0c0c0;
-  --text-muted: #8a8a8a;
+  --text-primary: #ffffff;
+  --text-secondary: #e0e0e0;
+  --text-muted: #a0a0a0;
   --blue: var(--vscode-textLink-foreground, #3794ff);
   --green: var(--vscode-testing-iconPassed, #73c991);
   --yellow: var(--vscode-testing-iconQueued, #cca700);
@@ -39,10 +39,10 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
-/* ── Layout (Bento Grid) ── */
-.root { max-width: 1000px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
-.bento { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
-.bento-wide { grid-column: 1 / -1; }
+/* ── Layout ── */
+.root { max-width: 800px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+.bento { display: block; }
+.bento-wide { display: block; }
 
 /* ── Header ── */
 .hdr {
@@ -78,28 +78,33 @@ body {
 .status-badge.on .dot { animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
 @keyframes ping { 75%, 100% { transform: scale(2.5); opacity: 0; } }
 
-/* ── Cards ── */
+/* ── Panel (Native Theme) ── */
 .card {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius); overflow: hidden;
-  transition: var(--transition);
+  background: var(--surface); border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg); overflow: hidden;
+  padding: 20px; box-shadow: 0 4px 24px rgba(0,0,0,0.2);
 }
-.card:hover { border-color: var(--border-light); }
 .card-hdr {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px 12px;
+  padding: 0 0 16px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  margin-bottom: 16px;
 }
 .card-title {
-  font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--text-secondary); display: flex; align-items: center; gap: 8px;
+  font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-primary); display: flex; align-items: center; gap: 8px;
 }
-.card-body { padding: 0 20px 20px; }
-.card-body.compact { padding: 0 20px 20px; }
+.card-body { padding: 0; }
+.card-body.compact { padding: 0; }
+.box {
+  background: rgba(0,0,0,0.2); border-radius: var(--radius-md);
+  padding: 16px; border: 1px solid rgba(255,255,255,0.05);
+}
 
 /* ── Metrics ── */
 .metric {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.03);
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .metric:last-child { border-bottom: none; }
 .metric-label { font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
@@ -112,7 +117,7 @@ body {
 
 /* ── Progress Bars ── */
 .progress-wrap { margin-top: 8px; }
-.progress-bar { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; }
+.progress-bar { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 2px; transition: width 0.8s ease; }
 .progress-fill.blue { background: var(--blue); }
 .progress-fill.green { background: var(--green); }
@@ -121,7 +126,7 @@ body {
 .progress-label { display: flex; justify-content: space-between; margin-top: 6px; font-size: 0.75rem; color: var(--text-secondary); }
 
 /* ── Toggles ── */
-.trow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.trow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .trow:last-child { border-bottom: none; }
 .trow-info { flex: 1; }
 .trow-name { font-size: 0.9rem; font-weight: 500; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
@@ -133,7 +138,7 @@ body {
 
 .tog { position: relative; width: 36px; height: 20px; cursor: pointer; flex-shrink: 0; }
 .tog input { display: none; }
-.tog-track { position: absolute; inset: 0; background: var(--surface); border-radius: 10px; border: 1px solid var(--border); transition: var(--transition); }
+.tog-track { position: absolute; inset: 0; background: rgba(255,255,255,0.05); border-radius: 10px; border: 1px solid var(--border); transition: var(--transition); }
 .tog-thumb { position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; background: var(--text-secondary); border-radius: 50%; transition: var(--transition); }
 .tog input:checked + .tog-track { background: var(--text-primary); border-color: var(--text-primary); }
 .tog input:checked + .tog-track + .tog-thumb { transform: translateX(16px); background: var(--bg); }
@@ -141,7 +146,7 @@ body {
 /* ── Range Sliders ── */
 .rng { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
 .rng-lbl { font-size: 0.8rem; color: var(--text-secondary); min-width: 50px; }
-.rng input[type=range] { flex: 1; height: 4px; background: var(--surface); border-radius: 2px; -webkit-appearance: none; outline: none; }
+.rng input[type=range] { flex: 1; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; -webkit-appearance: none; outline: none; }
 .rng input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: var(--text-primary); border-radius: 50%; cursor: pointer; transition: transform 0.1s; }
 .rng input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
 .rng-val { font-size: 0.8rem; color: var(--text-primary); min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -174,7 +179,7 @@ body {
 
 /* ── Activity Feed ── */
 .feed { max-height: 250px; overflow-y: auto; }
-.feed-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.feed-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
 .feed-row:last-child { border-bottom: none; }
 .feed-ts { font-size: 0.7rem; color: var(--text-muted); min-width: 45px; font-variant-numeric: tabular-nums; }
 .feed-badge { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
@@ -186,7 +191,7 @@ body {
 .feed-conf { font-size: 0.75rem; color: var(--text-muted); min-width: 35px; text-align: right; }
 
 /* ── Concepts ── */
-.cpt { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.cpt { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
 .cpt:last-child { border-bottom: none; }
 .cpt-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .cpt-name { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); font-family: monospace; }
@@ -195,7 +200,7 @@ body {
 .cpt-risk.caution { color: var(--yellow); background: rgba(234,179,8,0.1); }
 .cpt-risk.danger { color: var(--red); background: rgba(239,68,68,0.1); }
 .cpt-risk.unknown { color: var(--text-muted); background: rgba(255,255,255,0.05); }
-.cpt-bar { height: 3px; background: var(--surface); border-radius: 1.5px; overflow: hidden; }
+.cpt-bar { height: 3px; background: rgba(255,255,255,0.1); border-radius: 1.5px; overflow: hidden; }
 .cpt-fill { height: 100%; border-radius: 1.5px; }
 
 /* ── Toast & Overlays ── */
@@ -226,12 +231,12 @@ body {
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 
-.foot { display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.03); }
+.foot { display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.15); }
 
 /* Custom Stat Bars for "Stats" Card */
 .bar-r { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
 .bar-k { width: 80px; font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
-.bar-bg { flex: 1; height: 4px; background: var(--surface); border-radius: 2px; }
+.bar-bg { flex: 1; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
 .bar-fg { height: 100%; background: var(--text-secondary); border-radius: 2px; }
 .bar-n { width: 30px; text-align: right; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 500; }
 </style>
@@ -254,75 +259,94 @@ body {
   </div>
 </div>
 
-<!-- TOP ROW: Controls + Session -->
-<div class="bento">
-
-  <!-- CONTROL CARD -->
-  <div class="card">
-    <div class="card-hdr">
-      <div class="card-title"><span class="icon">⚡</span> Controls</div>
-      <span class="status-badge on" id="ctrlBadge" style="padding:4px 10px;font-size:.75rem">ON</span>
+<!-- MAIN CONTENT TILE -->
+<div class="card">
+  
+  <!-- Controls -->
+  <div class="card-hdr" style="padding-top: 0">
+    <div class="card-title"><span class="icon">⚡</span> Controls</div>
+    <span class="status-badge on" id="ctrlBadge" style="padding:4px 10px;font-size:.75rem">ON</span>
+  </div>
+  <div class="card-body">
+    <div class="trow">
+      <div class="trow-info">
+        <div class="trow-name"><span class="trow-icon blue">🖱</span> Auto-Click</div>
+        <div class="trow-desc">Automatically click accept / run buttons</div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chkEnabled" {{ENABLED_CHK}} onchange="instantToggle()">
+        <div class="tog-track"></div><div class="tog-thumb"></div>
+      </label>
     </div>
-    <div class="card-body">
-      <div class="trow">
-        <div class="trow-info">
-          <div class="trow-name"><span class="trow-icon blue">🖱</span> Auto-Click</div>
-          <div class="trow-desc">Automatically click accept / run buttons</div>
-        </div>
-        <label class="tog" onclick="event.stopPropagation()">
-          <input type="checkbox" id="chkEnabled" {{ENABLED_CHK}} onchange="instantToggle()">
-          <div class="tog-track"></div><div class="tog-thumb"></div>
-        </label>
+    <div class="trow">
+      <div class="trow-info">
+        <div class="trow-name"><span class="trow-icon green">⇣</span> Auto-Scroll</div>
+        <div class="trow-desc">Keep chat scrolled to bottom</div>
       </div>
-      <div class="trow">
-        <div class="trow-info">
-          <div class="trow-name"><span class="trow-icon green">⇣</span> Auto-Scroll</div>
-          <div class="trow-desc">Keep chat scrolled to bottom</div>
-        </div>
-        <label class="tog" onclick="event.stopPropagation()">
-          <input type="checkbox" id="chkScroll" {{SCROLL_CHK}} onchange="scrollToggle()">
-          <div class="tog-track"></div><div class="tog-thumb"></div>
-        </label>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chkScroll" {{SCROLL_CHK}} onchange="scrollToggle()">
+        <div class="tog-track"></div><div class="tog-thumb"></div>
+      </label>
+    </div>
+    <div class="trow">
+      <div class="trow-info">
+        <div class="trow-name"><span class="trow-icon yellow">🌐</span> Skip Browser SubAgent</div>
+        <div class="trow-desc">Pause auto-click when browser subagent is active</div>
       </div>
-      <div class="trow">
-        <div class="trow-info">
-          <div class="trow-name"><span class="trow-icon yellow">🌐</span> Skip Browser SubAgent</div>
-          <div class="trow-desc">Pause auto-click when browser subagent is active</div>
-        </div>
-        <label class="tog" onclick="event.stopPropagation()">
-          <input type="checkbox" id="chkSkipBrowser" {{SKIP_BROWSER_CHK}} onchange="skipBrowserToggle()">
-          <div class="tog-track"></div><div class="tog-thumb"></div>
-        </label>
-      </div>
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div class="rng"><span class="rng-lbl">Click</span><input type="range" id="rngApprove" min="200" max="5000" step="100" value="{{APPROVE_MS}}" oninput="$('valApprove').textContent=this.value+'ms'"><span class="rng-val" id="valApprove">{{APPROVE_MS}}ms</span></div>
-        <div class="rng"><span class="rng-lbl">Scroll</span><input type="range" id="rngScroll" min="100" max="5000" step="100" value="{{SCROLL_MS}}" oninput="$('valScroll').textContent=this.value+'ms'"><span class="rng-val" id="valScroll">{{SCROLL_MS}}ms</span></div>
-        <div class="rng"><span class="rng-lbl">Pause</span><input type="range" id="rngPause" min="1000" max="60000" step="500" value="{{PAUSE_MS}}" oninput="$('valPause').textContent=this.value+'ms'"><span class="rng-val" id="valPause">{{PAUSE_MS}}ms</span></div>
-      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chkSkipBrowser" {{SKIP_BROWSER_CHK}} onchange="skipBrowserToggle()">
+        <div class="tog-track"></div><div class="tog-thumb"></div>
+      </label>
+    </div>
+    <div style="padding-top:4px">
+      <div class="rng"><span class="rng-lbl">Click</span><input type="range" id="rngApprove" min="200" max="5000" step="100" value="{{APPROVE_MS}}" oninput="$('valApprove').textContent=this.value+'ms'"><span class="rng-val" id="valApprove">{{APPROVE_MS}}ms</span></div>
+      <div class="rng"><span class="rng-lbl">Scroll</span><input type="range" id="rngScroll" min="100" max="5000" step="100" value="{{SCROLL_MS}}" oninput="$('valScroll').textContent=this.value+'ms'"><span class="rng-val" id="valScroll">{{SCROLL_MS}}ms</span></div>
+      <div class="rng"><span class="rng-lbl">Pause</span><input type="range" id="rngPause" min="1000" max="60000" step="500" value="{{PAUSE_MS}}" oninput="$('valPause').textContent=this.value+'ms'"><span class="rng-val" id="valPause">{{PAUSE_MS}}ms</span></div>
     </div>
   </div>
 
-  <!-- SESSION CARD -->
-  <div class="card">
-    <div class="card-hdr">
-      <div class="card-title"><span class="icon">📊</span> Session</div>
-      <span class="status-badge" id="healthBadge" style="padding:4px 10px;font-size:.75rem">—</span>
-    </div>
-    <div class="card-body">
+  <!-- Session -->
+  <div class="card-hdr">
+    <div class="card-title"><span class="icon">📊</span> Session Info</div>
+    <span class="status-badge" id="healthBadge" style="padding:4px 10px;font-size:.75rem">—</span>
+  </div>
+  <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div class="box">
       <div class="typing" id="aiTyping"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span style="margin-left:4px">AI is thinking...</span></div>
       <div class="metric"><span class="metric-label"><span class="icon">⏱</span> Uptime</span><span class="metric-value blue" id="sessDuration">0m</span></div>
       <div class="metric"><span class="metric-label"><span class="icon">💬</span> Messages</span><span class="metric-value" id="sessMsg">0</span></div>
       <div class="metric"><span class="metric-label"><span class="icon">👆</span> Clicks</span><span class="metric-value green" id="sessApprove">0</span></div>
       <div class="metric"><span class="metric-label"><span class="icon">⚡</span> Avg Response</span><span class="metric-value" id="sessAvgResp">—</span></div>
-      <div id="toolBreakdown" style="margin-top:8px"></div>
-      <div class="metric" style="margin-top:4px"><span class="metric-label"><span class="icon">😴</span> Idle</span><span class="metric-value" id="idleStatus">—</span></div>
+      <div class="metric"><span class="metric-label"><span class="icon">😴</span> Idle</span><span class="metric-value" id="idleStatus">—</span></div>
+    </div>
+    <div class="box" id="toolBreakdown">
+      <div style="font-size:0.75rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);text-transform:uppercase">Tool Activity</div>
     </div>
   </div>
-</div>
 
-<!-- SECOND ROW: Targets + Stats -->
-<!-- TARGETS ROW -->
-<div class="card bento-wide" style="margin-top:16px">
+  <!-- Stats & ROI -->
+  <div class="card-hdr">
+    <div class="card-title"><span class="icon">📈</span> Stats & ROI</div>
+  </div>
+  <div class="card-body compact" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div class="box">
+      <div style="font-size:0.75rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);text-transform:uppercase">CLICK STATS (<span class="blue" id="statTotal">{{TOTAL}}</span> total)</div>
+      <div id="statBars"></div>
+      <div class="progress-wrap" style="margin-top:12px">
+        <div class="progress-label"><span>Success Rate</span><span id="successRate">—</span></div>
+        <div class="progress-bar"><div class="progress-fill green" id="successBar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="box">
+      <div style="font-size:0.75rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);text-transform:uppercase">TIME SAVED</div>
+      <div class="metric"><span class="metric-label">Session Saved</span><span class="metric-value green" id="roiSaved">0s</span></div>
+      <div class="metric"><span class="metric-label">Session Clicks</span><span class="metric-value blue" id="roiClicks">0</span></div>
+      <div class="metric"><span class="metric-label">Productivity</span><span class="metric-value" id="roiGain">0%</span></div>
+      <div class="metric"><span class="metric-label">Lifetime Saved</span><span class="metric-value green" id="roiLifeSaved">0m</span></div>
+    </div>
+  </div>
+
+  <!-- Targets -->
   <div class="card-hdr">
     <div class="card-title"><span class="icon">🎯</span> Auto-Click Targets</div>
     <span class="metric-value" id="statActive" style="font-size:.9rem">0 active</span>
@@ -331,102 +355,24 @@ body {
     <div class="pgrid" id="patGrid"></div>
     <div style="margin-top:10px;font-size:.75rem;color:var(--text-muted)">Click a tag to toggle. Green = active. Dashed = disabled.</div>
   </div>
-</div>
 
-<!-- STATS CARD -->
-<div class="bento" style="margin-top:16px">
-  <div class="card bento-wide">
-    <div class="card-hdr">
-      <div class="card-title"><span class="icon">📈</span> Stats</div>
-      <span class="metric-value blue" id="statTotal" style="font-size:.9rem">{{TOTAL}}</span>
-    </div>
-    <div class="card-body compact">
-      <div id="statBars"></div>
-      <div class="progress-wrap" style="margin-top:12px">
-        <div class="progress-label"><span>Success Rate</span><span id="successRate">—</span></div>
-        <div class="progress-bar"><div class="progress-fill green" id="successBar" style="width:0%"></div></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- THIRD ROW: Brain + Memory -->
-<div class="bento" style="margin-top:16px">
-
-  <!-- BRAIN CARD -->
-  <div class="card">
-    <div class="card-hdr">
-      <div class="card-title"><span class="icon">🧠</span> Brain</div>
-    </div>
-    <div class="card-body compact">
-      <div class="bento" style="gap:8px">
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Epoch</span><span class="metric-value blue" id="brainEpoch">{{LEARN_EPOCH}}</span></div>
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Tracking</span><span class="metric-value" id="brainTracking">{{LEARN_TRACKING}}</span></div>
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Allowed</span><span class="metric-value green" id="brainWhite">{{WHITE_COUNT}}</span></div>
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Blocked</span><span class="metric-value red" id="brainBlack">{{BLACK_COUNT}}</span></div>
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Promoted</span><span class="metric-value purple" id="brainPromoted">{{LEARN_COUNT}}</span></div>
-        <div class="metric" style="padding:6px 0"><span class="metric-label">Patterns</span><span class="metric-value" id="brainPatterns">{{LEARN_PATTERNS}}</span></div>
-      </div>
-      <div style="margin-top:12px">
-        <button class="qbtn primary" onclick="vscode.postMessage({command:'manageTerminal'})" style="width:100%;justify-content:center">Manage Rules</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MEMORY CARD -->
-  <div class="card">
-    <div class="card-hdr">
-      <div class="card-title"><span class="icon">💾</span> Memory</div>
-    </div>
-    <div class="card-body compact">
-      <div class="metric"><span class="metric-label">Pages</span><span class="metric-value blue" id="wikiPages">{{WIKI_PAGES}}</span></div>
-      <div class="metric"><span class="metric-label">Concepts</span><span class="metric-value cyan" id="wikiConcepts">{{WIKI_CONCEPTS}}</span></div>
-      <div class="metric"><span class="metric-label">Conflicts</span><span class="metric-value yellow" id="wikiContradictions">{{WIKI_CONTRADICTIONS}}</span></div>
-      <div id="conceptMap" style="margin-top:8px"></div>
-    </div>
-  </div>
-</div>
-
-<!-- TERMINAL RULES -->
-<div class="card bento-wide" style="margin-top:16px">
+  <!-- Terminal Rules -->
   <div class="card-hdr">
     <div class="card-title"><span class="icon">🛡️</span> Terminal Rules</div>
-    <div class="qactions">
-      <button class="qbtn success" style="padding:4px 10px;font-size:.75rem" onclick="vscode.postMessage({command:'manageTerminal'})">+ Add Rule</button>
+    <button class="qbtn success" style="padding:4px 10px;font-size:.75rem" onclick="vscode.postMessage({command:'manageTerminal'})">+ Add Rule</button>
+  </div>
+  <div class="card-body compact" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div class="box">
+      <div style="font-size:0.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;color:var(--green)">✓ Whitelist</div>
+      <div class="pgrid" id="whitelistGrid" style="max-height:180px;overflow-y:auto"></div>
+    </div>
+    <div class="box">
+      <div style="font-size:0.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;color:var(--red)">✗ Blacklist</div>
+      <div class="pgrid" id="blacklistGrid" style="max-height:180px;overflow-y:auto"></div>
     </div>
   </div>
-  <div class="card-body compact">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-      <div>
-        <div style="font-size:0.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;color:var(--green)">✓ Whitelist — Commands allowed to run</div>
-        <div class="pgrid" id="whitelistGrid" style="max-height:180px;overflow-y:auto"></div>
-      </div>
-      <div>
-        <div style="font-size:0.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;color:var(--red)">✗ Blacklist — Commands blocked</div>
-        <div class="pgrid" id="blacklistGrid" style="max-height:180px;overflow-y:auto"></div>
-      </div>
-    </div>
-  </div>
-</div>
 
-<!-- ROI CARD -->
-<div class="card bento-wide" style="margin-top:16px">
-  <div class="card-hdr">
-    <div class="card-title"><span class="icon">💰</span> ROI — Time Saved by Grav</div>
-  </div>
-  <div class="card-body compact" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0">
-    <div class="metric"><span class="metric-label">Time Saved</span><span class="metric-value green" id="roiSaved">0s</span></div>
-    <div class="metric"><span class="metric-label">Clicks</span><span class="metric-value blue" id="roiClicks">0</span></div>
-    <div class="metric"><span class="metric-label">Productivity</span><span class="metric-value" id="roiGain">0%</span></div>
-    <div class="metric"><span class="metric-label">Daily Est.</span><span class="metric-value cyan" id="roiDaily">0m</span></div>
-    <div class="metric"><span class="metric-label">Lifetime Saved</span><span class="metric-value green" id="roiLifeSaved">0m</span></div>
-    <div class="metric"><span class="metric-label">Lifetime Clicks</span><span class="metric-value" id="roiLifeClicks">0</span></div>
-    <div class="metric"><span class="metric-label">Sessions</span><span class="metric-value" id="roiLifeSessions">0</span></div>
-  </div>
-</div>
-
-<!-- LOGS CARD -->
-<div class="card bento-wide" style="margin-top:16px">
+  <!-- Activity Log -->
   <div class="card-hdr">
     <div class="card-title"><span class="icon">📝</span> Activity Log</div>
     <div class="qactions">
@@ -437,6 +383,7 @@ body {
   <div class="card-body compact">
     <div class="feed" id="logFeed"><div class="feed-empty">No activity yet</div></div>
   </div>
+
 </div>
 
 <!-- FOOTER ACTIONS -->

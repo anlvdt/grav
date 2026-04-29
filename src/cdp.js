@@ -329,7 +329,10 @@ function handleMessage(msg) {
             send('Target.attachToTarget', { targetId: info.targetId, flatten: true })
                 .then(r => {
                     if (r && r.sessionId) {
-                        send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, r.sessionId).catch(() => {});
+                        send('Target.setAutoAttach', { 
+                            autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                            filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'webview' }, { type: 'other' }]
+                        }, r.sessionId).catch(() => {});
                     }
                 }).catch(() => {});
         }
@@ -356,6 +359,7 @@ function handleMessage(msg) {
                     // This allows nested OOPIFs (webviews inside webviews) to be discovered
                     send('Target.setAutoAttach', {
                         autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                        filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'webview' }, { type: 'other' }]
                     }, sessionId).catch(() => { });
                     // Enable domains and inject observer
                     send('Runtime.enable', {}, sessionId).catch(() => { });
@@ -367,6 +371,7 @@ function handleMessage(msg) {
                 // Even for non-agent targets, enable auto-attach to discover nested webviews
                 send('Target.setAutoAttach', {
                     autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                    filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'webview' }, { type: 'other' }]
                 }, sessionId).catch(() => { });
             }
         } catch (_) { }
@@ -633,9 +638,11 @@ function isAgentTarget(info) {
 
     // ── vscode-webview:// targets ──
     if (url.startsWith('vscode-webview://')) {
-        // Check hard block list
+        // Check hard block list ONLY for titles to be safe, but aggressively accept iframes
+        if (type === 'iframe' || type === 'webview') return true;
+        
         for (const blocked of BLOCK_URLS) {
-            if (url.includes(blocked)) return false;
+            if (url.includes(blocked) || title.includes(blocked)) return false;
         }
         // Passed block list → likely agent/chat panel → accept
         return true;
@@ -677,8 +684,10 @@ function isAgentTarget(info) {
     if (url.startsWith('https://')) return false;
     // url blank handled above
 
-    // Default: accept unknown internal URLs (future-proof)
-    // But only if they don't match any block pattern
+    // Default: aggressively accept iframes/webviews to ensure we don't miss OOPIF chat panels
+    if (type === 'iframe' || type === 'webview') return true;
+
+    // Default for others: check blocklist
     for (const blocked of BLOCK_URLS) {
         if (url.includes(blocked)) return false;
     }
@@ -763,6 +772,7 @@ async function discoverTargets() {
                     // Enable auto-attach on this page to discover nested webviews
                     await send('Target.setAutoAttach', {
                         autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                        filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'webview' }, { type: 'other' }]
                     }, sessionId);
                     console.log('[Grav CDP] Force-attached to page for nested discovery:', info.targetId);
                 } catch (_) { }
@@ -790,6 +800,7 @@ async function attachToTarget(targetId, url, title = '') {
         try {
             await send('Target.setAutoAttach', {
                 autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'webview' }, { type: 'other' }]
             }, sessionId);
         } catch (_) { }
 

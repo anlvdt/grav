@@ -401,26 +401,39 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     //  Layer 4: Verify + retry after 200ms
     // ══════════════════════════════════════════════════════════
     function executeClick(btn, matched, text) {
-        // ALWAYS use native CDP click for reliability against strict validation
-        report('RETRY', { p: matched, b: text });
+        report('CLICK', { p: matched, b: text });
+
+        // Layer 1: Normal DOM click
+        try { btn.click(); } catch(_) {}
+
+        // Layer 2: Synthetic Pointer Events (React-friendly)
+        try {
+            var r = btn.getBoundingClientRect();
+            var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+            var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, pointerId: 1, pointerType: 'mouse' };
+            btn.dispatchEvent(new PointerEvent('pointerdown', opts));
+            btn.dispatchEvent(new MouseEvent('mousedown', opts));
+            btn.dispatchEvent(new PointerEvent('pointerup', opts));
+            btn.dispatchEvent(new MouseEvent('mouseup', opts));
+            btn.dispatchEvent(new MouseEvent('click', opts));
+        } catch(_) {}
+
+        // Expand special handling
         if (matched === 'Expand') {
-            setTimeout(function() { try { scanAndClick(); } catch(_) { /* DOM op */ } }, 400);
-            setTimeout(function() { try { scanAndClick(); } catch(_) { /* DOM op */ } }, 800);
+            setTimeout(function() { try { scanAndClick(); } catch(_) {} }, 400);
+            setTimeout(function() { try { scanAndClick(); } catch(_) {} }, 800);
         }
 
-        // Layer 4: Verify click worked — retry via CDP native click if button still visible
-        // NOTE: Only report RETRY, don't click locally — CDP host will use Input.dispatchMouseEvent
-        // which sends trusted browser-level events (more reliable than JS clicks)
+        // Layer 3: Native CDP click (Fallback if button still there)
         setTimeout(function() {
             try {
                 if (btn.isConnected && btn.offsetWidth > 0 && !btn.disabled) {
                     var stillText = labelOf(btn);
                     if (stillText === text) {
                         report('RETRY', { p: matched, b: text });
-                        // CDP host handles the actual click via cdpNativeClick()
                     }
                 }
-            } catch(_) { /* DOM op */ }
+            } catch(_) {}
         }, 200);
     }
 
