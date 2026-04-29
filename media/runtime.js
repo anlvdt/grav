@@ -225,7 +225,6 @@
             '[class*="keybinding"]', '.keybindings-editor',
             // Context menus and quick input
             '.context-view', '.monaco-menu', '.quick-input-widget', '.quick-input-list',
-            '.terminal-tab', '.terminal-outer-container',
             // Auth/Accounts
             '[class*="accounts"]', '[class*="authentication"]', '.account-picker',
             // Welcome/Getting started
@@ -312,7 +311,8 @@
                     var el = b;
                     for (var up = 0; up < 5 && el; up++) {
                         var cls = (el.className || '').toLowerCase();
-                        if (cls.indexOf('agent') !== -1 || cls.indexOf('chat') !== -1 || cls.indexOf('cascade') !== -1) {
+                        if (cls.indexOf('agent') !== -1 || cls.indexOf('chat') !== -1 || cls.indexOf('cascade') !== -1 ||
+                            cls.indexOf('terminal') !== -1 || cls.indexOf('panel') !== -1 || cls.indexOf('antigravity') !== -1) {
                             inAgentPanel = true; break;
                         }
                         el = el.parentElement;
@@ -327,26 +327,37 @@
                 setTimeout(scanAndClick, 400);
                 setTimeout(scanAndClick, 800);
             }
-            try { b.click(); } catch (_) { }
-            try {
-                var rect = b.getBoundingClientRect();
-                var cx = rect.left + rect.width / 2;
-                var cy = rect.top + rect.height / 2;
-                // Full event sequence: mouseover → mouseenter → pointer/mouse events → click
-                b.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
-                b.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: false, view: window, clientX: cx, clientY: cy }));
-                ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function (ev) {
-                    var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
-                    b.dispatchEvent(new C(ev, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: ev.indexOf('down') !== -1 ? 1 : 0, detail: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' }));
-                });
-                b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, detail: 1 }));
-            } catch (_) { }
-            // Focus + keyboard Enter (for accessibility-driven buttons)
-            try {
-                b.focus();
-                b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                b.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-            } catch (_) { }
+            // Delay the actual click to simulate human reaction and let frontend state settle
+            setTimeout(function() {
+                try { b.click(); } catch (_) { }
+                try {
+                    var rect = b.getBoundingClientRect();
+                    var cx = rect.left + rect.width / 2;
+                    var cy = rect.top + rect.height / 2;
+                    b.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
+                    b.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: false, view: window, clientX: cx, clientY: cy }));
+                    
+                    var evts = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+                    var idx = 0;
+                    var pump = function() {
+                        if (idx >= evts.length) {
+                            try {
+                                b.focus();
+                                b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                                b.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                            } catch (_) { }
+                            return;
+                        }
+                        var ev = evts[idx++];
+                        var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
+                        try {
+                            b.dispatchEvent(new C(ev, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: ev.indexOf('down') !== -1 ? 1 : 0, detail: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' }));
+                        } catch (_) {}
+                        setTimeout(pump, 20); // 20ms delay between pointer events
+                    };
+                    pump();
+                } catch (_) { }
+            }, 150); // 150ms initial reaction delay
             if (BRIDGE_PORT > 0) {
                 try {
                     var x = new XMLHttpRequest();

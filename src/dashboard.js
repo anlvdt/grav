@@ -86,6 +86,7 @@ function render() {
         enabled: cfg('enabled', true),
         scrollOn: cfg('autoScroll', true),
         dryRun: cfg('dryRun', false),
+        skipBrowser: cfg('skipBrowserAgent', false),
         pauseMs: cfg('scrollPauseMs', 7000),
         scrollMs: cfg('scrollIntervalMs', 500),
         patterns: cfg('approvePatterns', DEFAULT_PATTERNS),
@@ -96,6 +97,8 @@ function render() {
         totalClicks: state.totalClicks,
         whiteCount: SAFE_TERMINAL_CMDS.length + learning.getWhitelist().length,
         blackCount: DEFAULT_BLACKLIST.length + learning.getBlacklist().length,
+        terminalWhitelist: [...SAFE_TERMINAL_CMDS, ...learning.getWhitelist()],
+        terminalBlacklist: [...DEFAULT_BLACKLIST, ...learning.getBlacklist()],
         learnCount: learning.getPromotedCommands().length,
         learnEpoch: learning.getEpoch(),
         learnTracking: Object.keys(learning.getData()).length,
@@ -111,7 +114,7 @@ function render() {
 }
 
 function buildHtml(c) {
-    let h = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard.html'), 'utf8');
+    let h = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard-v2.html'), 'utf8');
     const lang = 'en';
     function replaceTag(str, tag, val) {
         return str.replace(new RegExp('\\{\\{\\s*' + tag + '\\s*\\}\\}', 'g'), () => val);
@@ -132,6 +135,8 @@ function buildHtml(c) {
     h = replaceTag(h, 'STATS_JSON', JSON.stringify(c.stats || {}));
     h = replaceTag(h, 'WHITE_COUNT', String(c.whiteCount || 0));
     h = replaceTag(h, 'BLACK_COUNT', String(c.blackCount || 0));
+    h = replaceTag(h, 'TERMINAL_WHITELIST_JSON', JSON.stringify(c.terminalWhitelist || []));
+    h = replaceTag(h, 'TERMINAL_BLACKLIST_JSON', JSON.stringify(c.terminalBlacklist || []));
     h = replaceTag(h, 'LEARN_COUNT', String(c.learnCount || 0));
     h = replaceTag(h, 'LEARN_EPOCH', String(c.learnEpoch || 0));
     h = replaceTag(h, 'LEARN_TRACKING', String(c.learnTracking || 0));
@@ -145,6 +150,8 @@ function buildHtml(c) {
     h = replaceTag(h, 'PROJECT_PATTERNS_JSON', JSON.stringify(c.projectPatterns || []));
     h = replaceTag(h, 'DRYRUN_CHK', c.dryRun ? 'checked' : '');
     h = replaceTag(h, 'DRYRUN_VAL', c.dryRun ? 'true' : 'false');
+    h = replaceTag(h, 'SKIP_BROWSER_CHK', c.skipBrowser ? 'checked' : '');
+    h = replaceTag(h, 'SKIP_BROWSER_VAL', c.skipBrowser ? 'true' : 'false');
     return h;
 }
 
@@ -166,10 +173,14 @@ function setupMessageHandler() {
             case 'toggleDryRun':
                 await c.update('dryRun', msg.enabled, vscode.ConfigurationTarget.Global);
                 _deps.onSave(); break;
+            case 'toggleSkipBrowser':
+                await c.update('skipBrowserAgent', msg.enabled, vscode.ConfigurationTarget.Global);
+                _deps.onSave(); break;
             case 'save': {
                 const d = msg.data;
                 await c.update('enabled', d.enabled, vscode.ConfigurationTarget.Global);
                 await c.update('autoScroll', d.scrollOn, vscode.ConfigurationTarget.Global);
+                await c.update('skipBrowserAgent', d.skipBrowser, vscode.ConfigurationTarget.Global);
                 await c.update('scrollPauseMs', d.pauseMs, vscode.ConfigurationTarget.Global);
                 await c.update('scrollIntervalMs', d.scrollMs, vscode.ConfigurationTarget.Global);
                 await c.update('approveIntervalMs', d.approveMs, vscode.ConfigurationTarget.Global);
@@ -221,6 +232,8 @@ function startTickers() {
             msg.tracking = Object.keys(learning.getData()).length;
             msg.whiteCount = SAFE_TERMINAL_CMDS.length + learning.getWhitelist().length;
             msg.blackCount = DEFAULT_BLACKLIST.length + learning.getBlacklist().length;
+            msg.terminalWhitelist = [...SAFE_TERMINAL_CMDS, ...learning.getWhitelist()];
+            msg.terminalBlacklist = [...DEFAULT_BLACKLIST, ...learning.getBlacklist()];
             msg.promoted = learning.getPromotedCommands().length;
             msg.patterns = learning.getPatternCache().length;
             msg.wikiPages = Object.keys(w.index).length;

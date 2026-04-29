@@ -10,7 +10,7 @@ const {
 
 function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent) {
     // Version tag - increment this when observer logic changes
-    const OBSERVER_VERSION = 'v3.5.3';
+    const OBSERVER_VERSION = 'v4.0.11';
     return `(function() {
     'use strict';
     // Version-based guard: allows new observer to replace old one
@@ -582,43 +582,12 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         return btns;
     }
 
-    // ── Browser Agent Detection ────────────────────────────
-    var _browserAgentActive = false;
-    var _lastBrowserCheck = 0;
-
-    function isBrowserAgentActive() {
-        if (!SKIP_BROWSER_AGENT) return false;
-        var now = Date.now();
-        if (now - _lastBrowserCheck < 2000) return _browserAgentActive;
-        _lastBrowserCheck = now;
-        try {
-            // Check recent messages for browser agent signals
-            var els = document.querySelectorAll('[class*=message], [class*=chat], [class*=response], [class*=step], [class*=tool]');
-            var SIGNALS = ['browser agent', 'browser_action', 'computer_use', 'use_browser', 'browsing', 'navigating to', 'screenshot'];
-            for (var j = els.length - 1; j >= Math.max(0, els.length - 5); j--) {
-                var t = (els[j].innerText || '').toLowerCase().slice(0, 500);
-                for (var k = 0; k < SIGNALS.length; k++) {
-                    if (t.indexOf(SIGNALS[k]) !== -1) { _browserAgentActive = true; return true; }
-                }
-            }
-            // Check for visible browser iframe
-            var frames = document.querySelectorAll('iframe[src*="http"], [class*=browser-view], [class*=simple-browser]');
-            for (var f = 0; f < frames.length; f++) {
-                if (frames[f].offsetWidth > 0 && frames[f].offsetHeight > 0) { _browserAgentActive = true; return true; }
-            }
-        } catch(_) {}
-        _browserAgentActive = false;
-        return false;
-    }
+    // ── Browser Agent Detection (Removed polling) ────────────────────────────
+    // Replaced by inline detection in scanAndClick to accurately reject tool calls.
 
     // ── Core: Scan & Click (enhanced) ───────────────────────
     var _scanCount = 0;
     function scanAndClick() {
-        if (isBrowserAgentActive()) {
-            _scanCount++;
-            if (_scanCount % 20 === 0) report('DEBUG', { skip: 'browser-agent-active', scan: _scanCount });
-            return;
-        }
         collectShadowRoots(document.body);
         var btns = collectAllButtons();
         _scanCount++;
@@ -646,11 +615,28 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             var text = labelOf(b);
             if (!text || text.length > 60) continue;
 
-            // Find match early
             var matched = findMatch(text);
+            var isSkipBtn = text === 'Skip' || text === 'Skip Action' || text === 'Skip step' || text.indexOf('Skip') === 0;
+
+            // ── BROWSER AGENT BYPASS LOGIC ──
+            if (SKIP_BROWSER_AGENT) {
+                if (isSkipBtn) {
+                    matched = 'Skip'; // Recognize Skip button to bypass
+                } else if (matched) {
+                    var tc = b.closest('[class*=tool], [class*=step], [class*=message], [class*=container]');
+                    if (tc) {
+                        var tcTxt = (tc.innerText || '').toLowerCase().slice(0, 300);
+                        var isBrowser = tcTxt.indexOf('browser_subagent') !== -1 || tcTxt.indexOf('computer_use') !== -1 || tcTxt.indexOf('use_browser') !== -1;
+                        if (isBrowser) {
+                            continue; // Block Accept/Run for browser tools
+                        }
+                    }
+                }
+            }
+
             if (!matched) continue;
 
-            var isHighConf = !!HIGH_CONF[matched];
+            var isHighConf = !!HIGH_CONF[matched] || matched === 'Skip';
 
             // Skip editor context (unless it's a high-confidence button like Accept all)
             if (!isHighConf && inEditorContext(b)) continue;

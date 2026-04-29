@@ -26,7 +26,7 @@ let _acceptTimer, _lastQuotaMs = 0, _termLog = [], _acceptPaused = false, _dynam
 let _dryRun = false;  // Dry run: scan buttons but don't click
 let _skipBrowserAgent = false;  // Skip auto-click when browser agent is active
 let _sessionState = { startMs: 0, msgCount: 0, toolCalls: [], responseTimes: [], lastActivityMs: 0, aiTyping: false, approveCount: 0, rejectCount: 0, toolBreakdown: {} };
-let _sbMain, _isAntigravity = false;
+let _sbMain, _sbCdp, _sbScroll, _sbSkip, _sbDry, _isAntigravity = false;
 
 // ── Detection & Config ───────────────────────────────────────
 const isAntigravity = (() => {
@@ -75,20 +75,64 @@ const getSessionSafe = () => {
 const refreshBar = () => {
     if (!_sbMain) return;
 
-    if (_enabled) {
-        const cdpSessions = cdp ? cdp.getSessionCount() : 0;
-        const cdpInfo = cdp && cdp.isConnected() ? (cdpSessions > 0 ? ` $(${_scrollOn ? 'fold-down' : 'fold-up'}) $(plug) ${cdpSessions}` : ` $(${_scrollOn ? 'fold-down' : 'fold-up'})`) : ' $(debug-disconnect)';
-        _sbMain.text = _acceptPaused ? `$(debug-pause) Grav` : `$(rocket) Grav${cdpInfo}`;
-        _sbMain.color = _acceptPaused ? '#fbbf24' : '#6ee7b7';
-        _sbMain.backgroundColor = undefined;
-    } else {
+    // ── Main: Grav ON/OFF/Paused ──
+    if (!_enabled) {
         _sbMain.text = `$(circle-slash) Grav`;
         _sbMain.color = '#f87171';
         _sbMain.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        _sbMain.tooltip = `Grav [Off] | ${_totalClicks} clicks — click to open menu`;
+    } else if (_acceptPaused) {
+        _sbMain.text = `$(debug-pause) Grav`;
+        _sbMain.color = '#fbbf24';
+        _sbMain.backgroundColor = undefined;
+        _sbMain.tooltip = `Grav [Paused] | ${_totalClicks} clicks — click to open menu`;
+    } else {
+        _sbMain.text = `$(rocket) Grav`;
+        _sbMain.color = '#6ee7b7';
+        _sbMain.backgroundColor = undefined;
+        _sbMain.tooltip = `Grav [Active] | ${_totalClicks} clicks — click to open menu`;
     }
-    _sbMain.tooltip = `Grav ${_enabled ? (_acceptPaused ? '[Paused]' : _dryRun ? '[Dry Run]' : _skipBrowserAgent ? '[Skip Browser]' : '[Active]') : '[Off]'} | ${_totalClicks} clicks\nClick to open Grav Menu`;
-    if (_dryRun) { _sbMain.text = `$(eye) Grav DRY`; _sbMain.color = '#a78bfa'; }
-    if (_skipBrowserAgent && !_dryRun) { _sbMain.text = `$(exclude) Grav SKIP`; _sbMain.color = '#f59e0b'; }
+
+    // ── CDP: connection + scroll ──
+    if (_sbCdp) {
+        const cdpConnected = cdp && cdp.isConnected();
+        const cdpSessions = cdp ? cdp.getSessionCount() : 0;
+        if (cdpConnected) {
+            const scrollIcon = _scrollOn ? '$(fold-down)' : '$(fold-up)';
+            _sbCdp.text = `$(plug) ${cdpSessions > 0 ? cdpSessions : ''} ${scrollIcon}`.trim();
+            _sbCdp.color = '#6ee7b7';
+            _sbCdp.tooltip = `CDP: ${cdpSessions} session(s) — Auto-Scroll: ${_scrollOn ? 'ON' : 'OFF'}\nClick to force reconnect`;
+        } else {
+            _sbCdp.text = `$(debug-disconnect)`;
+            _sbCdp.color = '#f87171';
+            _sbCdp.tooltip = `CDP: disconnected\nClick to reconnect`;
+        }
+        _sbCdp.show();
+    }
+
+    // ── Skip SubAgent ──
+    if (_sbSkip) {
+        if (_skipBrowserAgent) {
+            _sbSkip.text = `$(exclude) SKIP`;
+            _sbSkip.color = '#f59e0b';
+            _sbSkip.tooltip = `Skip Browser SubAgent: ON\nClick to disable`;
+            _sbSkip.show();
+        } else {
+            _sbSkip.hide();
+        }
+    }
+
+    // ── Dry Run ──
+    if (_sbDry) {
+        if (_dryRun) {
+            _sbDry.text = `$(eye) DRY`;
+            _sbDry.color = '#a78bfa';
+            _sbDry.tooltip = `Dry Run: ON — scanning buttons without clicking\nClick to disable`;
+            _sbDry.show();
+        } else {
+            _sbDry.hide();
+        }
+    }
 };
 
 const onStatsUpdated = () => { _totalClicks = Object.values(_stats).reduce((a, b) => a + b, 0); refreshBar(); if (_ctx) { _ctx.globalState.update('stats', _stats); _ctx.globalState.update('totalClicks', _totalClicks); } };
@@ -338,10 +382,25 @@ async function activate(ctx) {
     injection.writeRuntimeConfig(ctx);
     try { terminal.setup(ctx, learning); } catch (e) { console.warn('[Grav] terminal.setup skipped:', e.message); }
 
-    // Status bar
-    _sbMain = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, -10000);
+    // Status bar — multiple items
+    const SB_BASE = -10000;
+    _sbMain = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, SB_BASE);
     _sbMain.command = 'grav.statusMenu';
     _ctx.subscriptions.push(_sbMain);
+    _sbMain.show();
+
+    _sbCdp = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, SB_BASE - 1);
+    _sbCdp.command = 'grav.forceReconnect';
+    _ctx.subscriptions.push(_sbCdp);
+
+    _sbSkip = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, SB_BASE - 2);
+    _sbSkip.command = 'grav.toggleSkipBrowserAgent';
+    _ctx.subscriptions.push(_sbSkip);
+
+    _sbDry = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, SB_BASE - 3);
+    _sbDry.command = 'grav.toggleDryRun';
+    _ctx.subscriptions.push(_sbDry);
+
     refreshBar();
     _sbMain.show();
 
@@ -373,7 +432,7 @@ async function activate(ctx) {
                 { label: _scrollOn ? '$(fold-up) Disable Auto-Scroll' : '$(fold-down) Enable Auto-Scroll', command: 'grav.toggleScroll' },
                 { label: `$(plug) CDP Sessions (${cdpCount}) - Force Reconnect`, command: 'grav.forceReconnect' },
                 { label: _acceptPaused ? '$(play) Resume Auto-Accept' : '$(debug-pause) Pause Auto-Accept', command: _acceptPaused ? 'grav.resumeAccept' : 'grav.pauseAccept' },
-                { label: _skipBrowserAgent ? '$(exclude) Skip Browser Agent: ON' : '$(exclude) Skip Browser Agent: OFF', description: 'Pause khi browser agent hoạt động', command: 'grav.toggleSkipBrowserAgent' },
+                { label: _skipBrowserAgent ? '$(exclude) Skip Browser SubAgent: ON' : '$(exclude) Skip Browser SubAgent: OFF', description: 'Pause khi browser subagent hoạt động', command: 'grav.toggleSkipBrowserAgent' },
             ];
             const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Grav Menu' });
             if (pick) vscode.commands.executeCommand(pick.command);
@@ -500,7 +559,7 @@ async function activate(ctx) {
             await vscode.workspace.getConfiguration('grav').update('skipBrowserAgent', _skipBrowserAgent, vscode.ConfigurationTarget.Global);
             refreshBar();
             if (cdp) cdp.hotUpdate();
-            vscode.window.showInformationMessage(`[Grav] Skip Browser Agent ${_skipBrowserAgent ? 'ON' : 'OFF'}`);
+            vscode.window.showInformationMessage(`[Grav] Skip Browser SubAgent ${_skipBrowserAgent ? 'ON' : 'OFF'}`);
         }),
         vscode.commands.registerCommand('grav.resetLearningData', async () => {
             const confirm = await vscode.window.showWarningMessage('[Grav] Bạn có chắc chắn muốn xóa TOÀN BỘ dữ liệu học máy không?', 'Có, Xóa', 'Hủy');
@@ -516,6 +575,9 @@ async function activate(ctx) {
 
 function deactivate() {
     if (_sbMain) _sbMain.dispose();
+    if (_sbCdp) _sbCdp.dispose();
+    if (_sbSkip) _sbSkip.dispose();
+    if (_sbDry) _sbDry.dispose();
     if (_acceptTimer) clearInterval(_acceptTimer);
     bridge.stop();
 

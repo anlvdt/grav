@@ -2,7 +2,7 @@
     "name": "grav",
     "displayName": "Grav — Autopilot for Antigravity",
     "description": "AI Autopilot for Windsurf / Antigravity IDE (v1.19 to 1.24+). Auto-click approvals, auto-scroll chat, and guard terminal commands. Boost your workflow with adaptive learning and CDP-first reliability.",
-    "version": "4.0.3",
+    "version": "4.0.11",
     "icon": "icons/icon.png",
     "publisher": "anlvdt",
     "author": {
@@ -248,7 +248,8 @@
     },
     "scripts": {
         "vscode:prepublish": "echo ok",
-        "test": "node test/run-all.js"
+        "test": "node test/run-all.js",
+        "build": "npm install && npx -y @vscode/vsce package"
     },
     "dependencies": {
         "ws": "^8.20.0"
