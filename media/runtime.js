@@ -112,6 +112,7 @@
 
     var isAlreadyClicked = function(btn, text) {
         if (_clickedAt.has(btn)) return true;
+        if (btn.hasAttribute('data-grav-clicked')) return true;
         if (Date.now() < _globalCooldown) return true;
         var timeout = getCooldown(text);
         var key = text + '|' + (btn.getBoundingClientRect().top | 0);
@@ -123,6 +124,7 @@
 
     var markClicked = function(btn, text) {
         _clickedAt.add(btn);
+        try { btn.setAttribute('data-grav-clicked', 'true'); } catch(_) {}
         var now = Date.now();
         var key = text + '|' + (btn.getBoundingClientRect().top | 0);
         _clickedIds[key] = now;
@@ -259,6 +261,46 @@
         return false;
     };
 
+    var extractCmd = function(btn) {
+        var p = btn.parentElement;
+        for (var lv = 0; lv < 8 && p; lv++) {
+            var els = p.querySelectorAll('code, pre, [class*="terminal"], [class*="command"], [class*="shell"], [class*="code-block"], [class*="codeBlock"]');
+            for (var i = els.length - 1; i >= 0; i--) {
+                var txt = (els[i].textContent || '').trim();
+                if (txt.length >= 2 && txt.length <= 2000) return txt;
+            }
+            p = p.parentElement;
+        }
+        return '';
+    };
+
+    var isBlocked = function(cmd) {
+        if (!cmd) return null;
+        var lower = cmd.toLowerCase().trim();
+        for (var i = 0; i < BLACKLIST.length; i++) {
+            var p = BLACKLIST[i].toLowerCase().trim();
+            if (!p) continue;
+            var isMulti = p.indexOf(' ') !== -1 || p.indexOf('|') !== -1;
+            if (isMulti) {
+                if (lower.indexOf(p) === 0) return BLACKLIST[i];
+                if (lower.indexOf('sudo ' + p) !== -1) return BLACKLIST[i];
+                if (lower.indexOf('nohup ' + p) !== -1) return BLACKLIST[i];
+                var seps = lower.split(/[;&|]+/);
+                for (var j = 0; j < seps.length; j++) {
+                    var seg = seps[j].replace(/^\\s*(sudo|nohup|env)\\s+/g, '').trim();
+                    if (seg.indexOf(p) === 0) return BLACKLIST[i];
+                }
+            } else {
+                var words = lower.split(/[ \t\n\r;&|]+/);
+                for (var k = 0; k < words.length; k++) {
+                    var w = words[k].replace(/^\\s*(sudo|nohup|env)\\s+/g, '').trim();
+                    if (w === p) return BLACKLIST[i];
+                }
+            }
+        }
+        return null;
+    };
+
     var isVisible = function(el) {
         if (!el) return false;
         if (el.disabled) return false;
@@ -329,7 +371,6 @@
             }
             // Delay the actual click to simulate human reaction and let frontend state settle
             setTimeout(function() {
-                try { b.click(); } catch (_) { }
                 try {
                     var rect = b.getBoundingClientRect();
                     var cx = rect.left + rect.width / 2;
@@ -349,15 +390,19 @@
                             return;
                         }
                         var ev = evts[idx++];
-                        var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
-                        try {
-                            b.dispatchEvent(new C(ev, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: ev.indexOf('down') !== -1 ? 1 : 0, detail: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' }));
-                        } catch (_) {}
-                        setTimeout(pump, 20); // 20ms delay between pointer events
+                        if (ev === 'click') {
+                            try { b.click(); } catch (_) { }
+                        } else {
+                            var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
+                            try {
+                                b.dispatchEvent(new C(ev, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: ev.indexOf('down') !== -1 ? 1 : 0, detail: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' }));
+                            } catch (_) {}
+                        }
+                        setTimeout(pump, 30); // 30ms delay between pointer events
                     };
                     pump();
                 } catch (_) { }
-            }, 150); // 150ms initial reaction delay
+            }, 300); // 300ms initial reaction delay
             if (BRIDGE_PORT > 0) {
                 try {
                     var x = new XMLHttpRequest();

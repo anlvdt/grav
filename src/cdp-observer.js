@@ -268,6 +268,9 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         // Layer 1: WeakSet (same DOM node)
         if (_clicked.has(btn)) return true;
         
+        // Layer 1.5: Shared DOM attribute to prevent double-clicks between runtime.js and cdp-observer.js
+        if (btn.hasAttribute('data-grav-clicked')) return true;
+        
         // Layer 2: Global cooldown - minimum time between ANY clicks
         if (Date.now() < _globalCooldown) return true;
         
@@ -285,6 +288,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
 
     function markClicked(btn, text) {
         _clicked.add(btn);
+        try { btn.setAttribute('data-grav-clicked', 'true'); } catch(_) {}
         var now = Date.now();
         
         // Position-based tracking
@@ -397,58 +401,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     //  Layer 4: Verify + retry after 200ms
     // ══════════════════════════════════════════════════════════
     function executeClick(btn, matched, text) {
-        // Layer 1: Standard .click()
-        try { btn.click(); } catch(_) { /* fallback to events */ }
-
-        // Layer 2: Full pointer event sequence (React/Vue SyntheticEvent)
-        try {
-            var rect = btn.getBoundingClientRect();
-            var cx = rect.left + rect.width / 2;
-            var cy = rect.top + rect.height / 2;
-
-            // mousemove first (some frameworks need hover state)
-            btn.dispatchEvent(new MouseEvent('mouseover', {
-                bubbles:true, cancelable:true, view:window,
-                clientX:cx, clientY:cy
-            }));
-            btn.dispatchEvent(new MouseEvent('mouseenter', {
-                bubbles:false, cancelable:false, view:window,
-                clientX:cx, clientY:cy
-            }));
-
-            // Full click sequence: pointerdown → mousedown → pointerup → mouseup → click
-            ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(ev) {
-                var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
-                btn.dispatchEvent(new C(ev, {
-                    bubbles:true, cancelable:true, view:window,
-                    clientX:cx, clientY:cy, button:0, buttons:1,
-                    isPrimary:true, pointerId:1, pointerType:'mouse'
-                }));
-            });
-
-            // Explicit click event (some frameworks only listen to this)
-            btn.dispatchEvent(new MouseEvent('click', {
-                bubbles:true, cancelable:true, view:window,
-                clientX:cx, clientY:cy, button:0, detail:1
-            }));
-        } catch(_) { /* DOM op */ }
-
-        // Layer 3: Keyboard activation (accessibility path)
-        try {
-            btn.focus();
-            btn.dispatchEvent(new KeyboardEvent('keydown', {
-                key:'Enter', code:'Enter', keyCode:13, which:13,
-                bubbles:true, cancelable:true
-            }));
-            btn.dispatchEvent(new KeyboardEvent('keyup', {
-                key:'Enter', code:'Enter', keyCode:13, which:13,
-                bubbles:true, cancelable:true
-            }));
-        } catch(_) { /* DOM op */ }
-
-        report('CLICK', { p: matched, b: text });
-
-        // After Expand: quick re-scan to catch newly revealed buttons (Run, Allow, etc.)
+        // ALWAYS use native CDP click for reliability against strict validation
+        report('RETRY', { p: matched, b: text });
         if (matched === 'Expand') {
             setTimeout(function() { try { scanAndClick(); } catch(_) { /* DOM op */ } }, 400);
             setTimeout(function() { try { scanAndClick(); } catch(_) { /* DOM op */ } }, 800);
