@@ -10,7 +10,7 @@ const {
 
 function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent) {
     // Version tag - increment this when observer logic changes
-    const OBSERVER_VERSION = 'v4.0.11';
+    const OBSERVER_VERSION = 'v4.0.12';
     return `(function() {
     'use strict';
     // Version-based guard: allows new observer to replace old one
@@ -590,7 +590,9 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
                 if (isSkipBtn) {
                     matched = 'Skip'; // Recognize Skip button to bypass
                 } else if (matched) {
-                    var tc = b.closest('[class*=tool], [class*=step], [class*=message], [class*=container]');
+                    // Use only tight, per-step containers — NOT [class*=message] or [class*=container]
+                    // which wrap multiple tool calls and cause false positives on terminal Run buttons
+                    var tc = b.closest('[class*=tool], [class*=step]');
                     if (tc) {
                         var tcTxt = (tc.innerText || '').toLowerCase().slice(0, 300);
                         var isBrowser = tcTxt.indexOf('browser_subagent') !== -1 || tcTxt.indexOf('computer_use') !== -1 || tcTxt.indexOf('use_browser') !== -1;
