@@ -10,7 +10,7 @@ const {
 
 function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent) {
     // Version tag - increment this when observer logic changes
-    const OBSERVER_VERSION = 'v4.0.12';
+    const OBSERVER_VERSION = 'v4.0.15';
     return `(function() {
     'use strict';
     // Version-based guard: allows new observer to replace old one
@@ -381,14 +381,15 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             btn.closest('[class*=popup]') ||
             btn.closest('[class*=modal]') ||
             btn.closest('[class*=toast]') ||
+            btn.closest('[class*=tool]') ||
+            btn.closest('[class*=step]') ||
+            btn.closest('[class*=command]') ||
+            btn.closest('[class*=terminal]') ||
             // React app container (Antigravity agent UI root)
             btn.closest('.react-app-container') ||
             // Action bars within agent panel
             btn.closest('[class*=action-bar]') ||
-            btn.closest('[class*=toolbar]') ||
-            // Fallback: if inside body and not blocked above,
-            // this is likely the agent webview (OOPIF isolation)
-            btn.closest('body')
+            btn.closest('[class*=toolbar]')
         );
     }
 
@@ -584,28 +585,30 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
 
             var matched = findMatch(text);
             var isSkipBtn = text === 'Skip' || text === 'Skip Action' || text === 'Skip step' || text.indexOf('Skip') === 0;
+            var browserContext = false;
 
             // ── BROWSER AGENT BYPASS LOGIC ──
             if (SKIP_BROWSER_AGENT) {
+                // Use only tight, per-step containers — NOT [class*=message] or [class*=container]
+                // which wrap multiple tool calls and cause false positives on terminal Run buttons
+                var tc = b.closest('[class*=tool], [class*=step]');
+                if (tc) {
+                    var tcTxt = (tc.innerText || '').toLowerCase().slice(0, 300);
+                    browserContext = tcTxt.indexOf('browser_subagent') !== -1 || tcTxt.indexOf('computer_use') !== -1 || tcTxt.indexOf('use_browser') !== -1;
+                }
+
                 if (isSkipBtn) {
-                    matched = 'Skip'; // Recognize Skip button to bypass
-                } else if (matched) {
-                    // Use only tight, per-step containers — NOT [class*=message] or [class*=container]
-                    // which wrap multiple tool calls and cause false positives on terminal Run buttons
-                    var tc = b.closest('[class*=tool], [class*=step]');
-                    if (tc) {
-                        var tcTxt = (tc.innerText || '').toLowerCase().slice(0, 300);
-                        var isBrowser = tcTxt.indexOf('browser_subagent') !== -1 || tcTxt.indexOf('computer_use') !== -1 || tcTxt.indexOf('use_browser') !== -1;
-                        if (isBrowser) {
-                            continue; // Block Accept/Run for browser tools
-                        }
-                    }
+                    if (browserContext) matched = 'Skip';
+                } else if (matched && browserContext) {
+                    continue; // Block Accept/Run for browser tools
                 }
             }
 
             if (!matched) continue;
 
             var isHighConf = !!HIGH_CONF[matched] || matched === 'Skip';
+
+            if (matched === 'Skip' && !browserContext) continue;
 
             // Skip editor context (unless it's a high-confidence button like Accept all)
             if (!isHighConf && inEditorContext(b)) continue;
@@ -630,7 +633,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             }
 
             // Safety guard for Run/Execute commands
-            if (matched === 'Run' || matched === 'Run Task') {
+            if (matched === 'Run' || matched === 'Run Task' || matched === 'Execute') {
                 // Global cooldown: don't click Run too fast (terminal needs time)
                 if (isRunCooldown()) continue;
                 
@@ -646,23 +649,24 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             }
 
             // ── VALIDATION: Must prove this is an approval dialog ──
-            // Strategy 1: Has a Reject/Cancel sibling nearby (strongest signal)
-            var hasReject = hasRejectNearby(b);
-            // Strategy 2: High-confidence pattern (these ONLY appear in agent approval contexts)
-            // Since CDP observer only runs inside agent webviews (filtered by isAgentTarget),
-            // we don't need strict container checks — the webview itself IS the agent context.
-            var isHighConf = !!HIGH_CONF[matched];
-            // Strategy 3: Inside an agent-like container (for non-high-conf patterns)
-            var isAgent = inAgentContext(b);
+            // Skip button in browser context already validated — bypass sibling check
+            // (Skip is in REJECT_WORDS so hasRejectNearby can't find a reject sibling for it,
+            //  since it excludes itself and Expand isn't a reject word)
+            if (matched === 'Skip' && browserContext) {
+                // Already confirmed: isSkipBtn + browserContext + SKIP_BROWSER_AGENT
+                // No further validation needed
+            } else {
+                // Strategy 1: Has a Reject/Cancel sibling nearby (strongest signal)
+                var hasReject = hasRejectNearby(b);
+                // Strategy 2: Inside an agent-like container
+                var isAgent = inAgentContext(b);
 
-            // HIGH_CONF patterns are auto-clicked without additional validation
-            // (they only appear in agent approval contexts)
-            if (isHighConf) {
-                // Proceed to click — no further validation needed
-            } else if (!hasReject && !isAgent) {
-                // Non-high-conf patterns need either reject sibling or agent context
-                report('DEBUG', { skip: matched, text: text, hasReject: hasReject, isHighConf: isHighConf, isAgent: isAgent });
-                continue;
+                // Every action needs either reject-sibling confirmation or a real agent context.
+                // This keeps high-confidence labels like Accept/Run from firing in unrelated UI.
+                if (!hasReject && !isAgent) {
+                    report('DEBUG', { skip: matched, text: text, hasReject: hasReject, isHighConf: isHighConf, isAgent: isAgent });
+                    continue;
+                }
             }
 
             // ── DRY RUN: report but don't click ──
