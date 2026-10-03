@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.21
+
+- Dashboard UI polish: replace all emoji with inline SVG icons (`stroke="currentColor"`, `aria-hidden`), add footer with GitHub/star links and author credit, and add an `openExternal` host whitelist so the webview can only open the pinned repo and author profile URLs.
+- Contrast fixes: introduce `--green-ink`/`--yellow-ink`/`--red-ink`/`--blue-ink` text tokens with darker light-theme values (`#15803d`/`#a16207`/`#b91c1c`/`#3b5ddb`) so `.status-badge.on`, `.ptag`, `.qbtn.success/warn/danger`, `.trow-icon`, `.feed-badge` and footer links meet WCAG AA on light themes. `.ptag.off` moved from `--text-muted` to `--text-secondary`.
+- Press feedback and tap target: `:active { transform: translateY(1px) }` on all actionable controls; `.link-btn` gets `min-height:24px` (`#btnDecisionDetails` 18px → 24px).
+- Test suite: 1422 assertions across 40 files, all passing.
+
 ## 4.0.20
 
 - Bump version to 4.0.20.

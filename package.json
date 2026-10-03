@@ -1,8 +1,8 @@
 {
     "name": "grav",
-    "displayName": "Grav — Autopilot for Antigravity",
-    "description": "AI Autopilot for Windsurf / Antigravity IDE (v1.19 to 1.24+). Auto-click approvals, auto-scroll chat, and guard terminal commands. Boost your workflow with adaptive learning and CDP-first reliability.",
-    "version": "4.0.20",
+    "displayName": "Antigravity Auto Accept — Grav (Auto Approve / Auto Run)",
+    "description": "Auto accept edits and auto approve supported Run prompts in Antigravity IDE with configurable terminal rules, dry run and auto scroll.",
+    "version": "4.0.21",
     "icon": "icons/icon.png",
     "publisher": "ANLE",
     "author": {
@@ -20,10 +20,23 @@
     },
     "keywords": [
         "antigravity",
-        "windsurf",
-        "copilot",
-        "ai-assistant",
-        "automation"
+        "antigravity auto accept",
+        "auto accept",
+        "auto-accept",
+        "auto approve",
+        "auto-approve",
+        "auto run",
+        "auto-run",
+        "auto clicker",
+        "auto click",
+        "accept all",
+        "agent",
+        "approval",
+        "terminal",
+        "automation",
+        "auto scroll",
+        "autopilot",
+        "cdp"
     ],
     "license": "MIT",
     "engines": {
@@ -117,6 +130,22 @@
             {
                 "command": "grav.recordMissedAction",
                 "title": "Grav: Record Missed Click"
+            },
+            {
+                "command": "grav.removeRuntime",
+                "title": "Grav: Remove Injected Runtime"
+            },
+            {
+                "command": "grav.setScanSpeed",
+                "title": "Grav: Set Scan Speed (permissions unchanged)"
+            },
+            {
+                "command": "grav.permissionProfile",
+                "title": "Grav: Select Permission Profile"
+            },
+            {
+                "command": "grav.configureAutopilot",
+                "title": "Grav: Configure Autopilot Profile (One-Time Setup)"
             }
         ],
         "keybindings": [
@@ -159,7 +188,7 @@
                         "custom"
                     ],
                     "default": "custom",
-                    "description": "High-level operating mode for Grav. Safe = conservative approvals, Balanced = recommended default, Fast = quickest routine flow, custom = manual settings."
+                    "description": "Legacy combined presets (labels, scan/scroll settings and browser skipping). Use Grav: Set Scan Speed for speed-only changes and Grav: Select Permission Profile for permissions."
                 },
                 "grav.presetMode": {
                     "type": "string",
@@ -201,17 +230,16 @@
                 "grav.approveIntervalMs": {
                     "type": "number",
                     "default": 1000,
-                    "description": "Interval between button scan cycles (milliseconds). Minimum enforced: 3000ms."
+                    "description": "Interval between button scan cycles (milliseconds). Minimum enforced: 100ms; the dashboard slider starts at 200ms."
                 },
                 "grav.language": {
                     "type": "string",
                     "enum": [
-                        "vi",
-                        "en",
-                        "zh"
+                        "en"
                     ],
-                    "default": "vi",
-                    "description": "UI language for Grav dashboard (vi = Vietnamese, en = English, zh = Chinese)."
+                    "default": "en",
+                    "description": "Dashboard language. The dashboard currently supports English only.",
+                    "deprecationMessage": "Deprecated: the dashboard currently supports English only; changing this setting has no effect."
                 },
                 "grav.terminalWhitelist": {
                     "type": "array",
@@ -219,7 +247,7 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Additional terminal commands to always allow. Supplements the built-in safe command list."
+                    "description": "Explicit terminal grants. A single executable is a legacy broad grant for all literal arguments; multiple tokens form a literal argv-prefix grant. Blacklist takes priority. Unknown commands and unsupported shell syntax require manual review; grants do not prove safety."
                 },
                 "grav.terminalBlacklist": {
                     "type": "array",
@@ -227,19 +255,19 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Terminal commands to always block. Supports plain substrings and /regex/ patterns."
+                    "description": "Commands Grav will not auto-approve; host execution permissions are unchanged. Takes priority over grants. Supports boundary-aware literal patterns and /regex/ rules."
                 },
                 "grav.learnEnabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable adaptive learning. Grav observes terminal command approve/reject behavior and suggests whitelist/blacklist entries."
+                    "description": "Observe explicit approve/reject feedback and suggest policy candidates. Suggestion scores are not safety probabilities and learning never generates authorization."
                 },
                 "grav.learnThreshold": {
                     "type": "number",
                     "default": 3,
                     "minimum": 1,
                     "maximum": 50,
-                    "description": "Number of approvals required before Grav suggests promoting a command to the whitelist."
+                    "description": "Minimum explicit user approvals before a candidate suggestion, also requiring sufficient suggestion score. Manage Terminal opens explicit policy management; suggestions do not change grants."
                 },
                 "grav.cdpEnabled": {
                     "type": "boolean",
@@ -254,7 +282,8 @@
                 "grav.skipTerminalAccept": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Skip blind terminal accept via VS Code API. Let the CDP Safety Guard handle Run button clicks instead."
+                    "description": "Native acceptance is always restricted to known edit APIs. Blind terminal acceptance is disabled regardless of this legacy setting.",
+                    "deprecationMessage": "Deprecated: the native edit restriction is always active. Setting this legacy flag to false cannot enable blind acceptance APIs."
                 },
                 "grav.dryRun": {
                     "type": "boolean",
@@ -265,6 +294,96 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Skip auto-click when Browser Agent is active. Pauses Grav when Antigravity triggers a browser/computer-use agent."
+                },
+                "grav.permissionProfile": {
+                    "type": "string",
+                    "enum": [
+                        "legacy",
+                        "observe",
+                        "edits",
+                        "terminal"
+                    ],
+                    "default": "legacy",
+                    "description": "Independent of scan speed. Observe: no auto-approval; Edits: command-free edit/UI actions; Terminal: edits plus scoped exact/prefix rules only, without legacy grants. Browser/MCP approvals remain manual outside Legacy. Legacy preserves P0 label and executable-grant behavior."
+                },
+                "grav.permissionRules": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "default": [],
+                    "description": "Explicit Grav exact/prefix argv rules with scope and expiry. Use Manage Terminal for preview, create, revoke and history. Session rules are memory-only; project rules bind to the recorded workspace. Host permissions are unchanged."
+                },
+                "grav.autopilotProfile": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false,
+                        "grants": []
+                    },
+                    "additionalProperties": false,
+                    "description": "Configure exact permission targets and scopes once for supported Antigravity permission cards. Observe profile remains non-actuating.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "grants": {
+                            "type": "array",
+                            "maxItems": 256,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id",
+                                    "effect",
+                                    "operation",
+                                    "target",
+                                    "scope"
+                                ],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "effect": {
+                                        "type": "string",
+                                        "enum": [
+                                            "allow",
+                                            "deny"
+                                        ]
+                                    },
+                                    "operation": {
+                                        "type": "string",
+                                        "enum": [
+                                            "command",
+                                            "read_file",
+                                            "write_file",
+                                            "read_url",
+                                            "execute_url",
+                                            "mcp"
+                                        ]
+                                    },
+                                    "target": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 2000,
+                                        "description": "Exact permission target; wildcards are not supported."
+                                    },
+                                    "scope": {
+                                        "type": "string",
+                                        "enum": [
+                                            "once",
+                                            "conversation",
+                                            "project",
+                                            "workspace",
+                                            "global"
+                                        ]
+                                    },
+                                    "workspace": {
+                                        "type": "string",
+                                        "description": "Optional restriction to the exact active workspace."
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 "grav.retryBudget": {
                     "type": "object",
@@ -286,6 +405,104 @@
                         }
                     }
                 },
+                "grav.decisionRules": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false
+                    },
+                    "additionalProperties": false,
+                    "description": "Configured answers for Antigravity ask_question cards. Disabled by default; only exact fingerprint + scope matches actuate. Sensitive questions never auto-answer.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "version": {
+                            "type": "string",
+                            "maxLength": 200
+                        },
+                        "paused": {
+                            "type": "boolean"
+                        },
+                        "rules": {
+                            "type": "array",
+                            "maxItems": 256,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id",
+                                    "kind",
+                                    "fingerprint",
+                                    "scope",
+                                    "answer"
+                                ],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                            "question",
+                                            "form",
+                                            "review-plan"
+                                        ]
+                                    },
+                                    "questionId": {
+                                        "type": "string"
+                                    },
+                                    "fingerprint": {
+                                        "type": "string",
+                                        "pattern": "^decision-v1:"
+                                    },
+                                    "scope": {
+                                        "type": "object",
+                                        "properties": {
+                                            "project": {
+                                                "type": "string"
+                                            },
+                                            "taskId": {
+                                                "type": "string"
+                                            },
+                                            "conversationId": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "answer": {
+                                        "type": "object",
+                                        "properties": {
+                                            "optionIds": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "values": {
+                                                "type": "object"
+                                            },
+                                            "decision": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "approve",
+                                                    "reject"
+                                                ]
+                                            }
+                                        }
+                                    },
+                                    "revisionId": {
+                                        "type": "string"
+                                    },
+                                    "expiresAt": {
+                                        "type": "number"
+                                    },
+                                    "revoked": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     },
@@ -293,16 +510,23 @@
         "vscode:prepublish": "echo ok",
         "smoke": "node test/smoke-flows.test.js",
         "test": "node test/run-all.js",
-        "package:vsix": "npx -y @vscode/vsce package",
-        "release:check": "npx -y @vscode/vsce ls --tree",
+        "package:vsix": "node scripts/package.js",
+        "release:check": "node scripts/package.js --check",
         "release": "node scripts/release.js",
-        "build": "npm run package:vsix"
+        "build": "node scripts/package.js",
+        "verify:vsix": "node scripts/verify-vsix.js",
+        "test:webview": "node test/dashboard-webview.browser.js",
+        "pilot:replay": "node scripts/replay-pilot.js"
     },
     "dependencies": {
-        "ws": "^8.20.0"
+        "ws": "^8.22.0"
     },
     "devDependencies": {
-        "@vitejs/plugin-react": "^6.0.1",
-        "vite": "^8.0.10"
+        "@vitejs/plugin-react": "^6.1.1",
+        "@vscode/vsce": "4.0.0",
+        "playwright": "1.63.0",
+        "vite": "^8.3.2",
+        "yauzl": "^3.4.0",
+        "yazl": "^2.5.1"
     }
 }
