@@ -4,6 +4,7 @@
 'use strict';
 
 const vscode = require('vscode');
+const { matchesBlacklist } = require('./action-policy');
 const fs     = require('fs');
 const path   = require('path');
 const os     = require('os');
@@ -33,6 +34,28 @@ function isPathSafe(fp) {
     return true;
 }
 
+// Resolve existing ancestors as well as the final path: an absent file beneath a
+// symlinked directory must not escape an allowed root.
+function canonicalPath(fp) {
+    let current = path.resolve(fp);
+    const tail = [];
+    while (!fs.existsSync(current)) {
+        try { fs.lstatSync(current); throw new Error('Dangling symlink'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const parent = path.dirname(current);
+        if (parent === current) throw new Error('Unresolvable path');
+        tail.unshift(path.basename(current)); current = parent;
+    }
+    return path.join(fs.realpathSync(current), ...tail);
+}
+function isWithinRoot(fp, root) {
+    if (!isPathSafe(fp) || !isPathSafe(root)) return false;
+    try {
+        const relative = path.relative(canonicalPath(root), canonicalPath(fp));
+        return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+    } catch (_) { return false; }
+}
+
 /**
  * Write file with elevated permissions if needed.
  * Sanitizes inputs before shell execution.
@@ -49,7 +72,7 @@ function elevatedWrite(fp, content) {
         path.join(os.homedir(), '.antigravity-ide'), // Antigravity IDE config
         path.join(os.homedir(), '.antigravity'), // Legacy Antigravity config
     ];
-    const inAllowed = allowedRoots.some(root => resolved.startsWith(path.resolve(root)));
+    const inAllowed = allowedRoots.some(root => isWithinRoot(resolved, root));
     if (!inAllowed) throw new Error(`Path outside allowed directories: ${fp}`);
 
     try {
@@ -179,78 +202,7 @@ function extractCommands(cmdLine) {
     return [...new Set(cmds)];
 }
 
-/**
- * Check if a command line matches any blacklist pattern.
- * Multi-word patterns use substring match (specific enough).
- * Single-word patterns use word-boundary match (avoid false positives).
- * @param {string} cmdLine
- * @param {string[]} blacklist
- * @returns {string|null} matched pattern or null
- */
-function matchesBlacklist(cmdLine, blacklist) {
-    const lower = cmdLine.toLowerCase().trim();
-    for (const pattern of blacklist) {
-        const p = pattern.toLowerCase().trim();
-        if (!p) continue;
-
-        // Regex patterns: /pattern/
-        if (p.startsWith('/') && p.endsWith('/')) {
-            try {
-                const rawPattern = p.slice(1, -1);
-                // ReDoS protection: reject overly complex or long patterns
-                if (rawPattern.length > 200) continue;
-                if (cmdLine.length > 2000) continue;
-                // Reject catastrophic backtracking patterns: nested quantifiers like (a+)+, (a*)+, (.+)*
-                if (/\([^)]*[+*][^)]*\)[+*?]/.test(rawPattern)) continue;
-                // Reject alternation inside quantified group: (a|ab)+
-                if (/\([^)]*\|[^)]*\)[+*?]/.test(rawPattern)) continue;
-                const userRe = new RegExp(rawPattern, 'i');
-                if (userRe.test(cmdLine)) return pattern;
-            } catch (_) { /* non-critical */ }
-            continue;
-        }
-
-        // Multi-word / pipe patterns
-        if (p.includes(' ') || p.includes('|')) {
-            // Pipe-to-shell: pattern starts with '|' (e.g., '| bash', '| sh')
-            // Use substring match — these appear mid-command: curl url | bash
-            if (p.startsWith('|')) {
-                if (lower.includes(p)) return pattern;
-                continue;
-            }
-
-            // Pipe-chain: no spaces, has '|' (e.g., 'wget|sh', 'curl|bash')
-            // Detects: wget <url> | sh  OR  curl <url>|bash
-            if (!p.includes(' ') && p.includes('|')) {
-                const [pcmd, pshell] = p.split('|');
-                // Word-boundary check: 'curl' must not match 'curling' or 'mycurl'
-                const pcmdRe = new RegExp(`^${pcmd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$|[|;&])`, 'i');
-                if (pcmdRe.test(lower)) {
-                    const shellRe = new RegExp(`[|]\\s*${pshell.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$|;)`, 'i');
-                    if (shellRe.test(lower)) return pattern;
-                }
-                continue;
-            }
-
-            // Standard multi-word: match at start or after separator + trailing boundary
-            // The lookahead (?=\s|$|[;|&]) prevents 'git push --force' matching '--force-with-lease'
-            const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`(?:^|[;|&]\\s*|\\b(?:sudo|nohup|time|env)\\s+)${escaped}(?=\\s|$|[;|&])`, 'i');
-            if (re.test(lower)) return pattern;
-            continue;
-        }
-
-        // Single-word patterns → word-boundary match
-        // "shutdown" should match "shutdown" or "shutdown -h now"
-        // but NOT "shutdown-handler" or "myshutdown"
-        const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = new RegExp(`(?:^|[\\s;|&/\\\\])${escaped}(?:$|[\\s;|&])`, 'i');
-        if (re.test(lower) || lower === p) return pattern;
-    }
-    return null;
-}
-
 module.exports = {
     escapeRegex, isPathSafe, elevatedWrite, workbenchPath,
-    cfg, extractCommands, matchesBlacklist,
+    cfg, extractCommands, matchesBlacklist, isWithinRoot,
 };

@@ -11,16 +11,29 @@
 'use strict';
 
 const vscode = require('vscode');
-const { cfg, extractCommands, matchesBlacklist } = require('./utils');
-const { DEFAULT_BLACKLIST } = require('./constants');
+const { cfg, extractCommands } = require('./utils');
+const { DEFAULT_BLACKLIST, SAFE_TERMINAL_CMDS } = require('./constants');
 const autofix = require('./autofix');
+const Policy = require('./action-policy');
+const { getEffectiveConfig } = require('./configuration');
 
 /**
  * Setup all terminal listeners.
  * @param {vscode.ExtensionContext} ctx
  * @param {object} learning - learning module reference
  */
-function setup(ctx, learning) {
+function setup(ctx, learning, opts = {}) {
+    let disposed = false;
+    ctx.subscriptions.push({ dispose: () => { disposed = true; } });
+    function getPolicy() {
+        try {
+            const supplied = opts.getPolicy ? opts.getPolicy() : getEffectiveConfig(ctx);
+            if (!supplied) return { enabled: false };
+            return { enabled: cfg('enabled', true), paused: false, dryRun: cfg('dryRun', false), terminalWhitelist: cfg('terminalWhitelist', []), builtInGrants: SAFE_TERMINAL_CMDS, ...supplied,
+                blacklist: [...new Set([...DEFAULT_BLACKLIST, ...(supplied.blacklist || supplied.terminalBlacklist || cfg('terminalBlacklist', []))])] };
+        } catch (_) { return { enabled: false }; }
+    }
+
     const _pendingExecs = new Map();
     const _seenCmds = new Set();
 
@@ -31,12 +44,10 @@ function setup(ctx, learning) {
     }
 
     // Safe record — skip blacklisted commands to prevent learning dangerous patterns
-    const userBlacklist = cfg('terminalBlacklist', []);
-    const allBlacklist = [...DEFAULT_BLACKLIST, ...userBlacklist];
     function safeRecord(cmdLine, action, context) {
         if (!cfg('learnEnabled', true)) return;
-        if (matchesBlacklist(cmdLine, allBlacklist)) return;
-        learning.recordAction(cmdLine, action, context);
+        if (disposed || Policy.evaluateCommand(cmdLine, getPolicy()).decision === 'deny') return;
+        learning.recordAction(cmdLine, action, { ...context, source: 'terminal-observation' });
     }
 
     // ── Method 1: Shell execution API ──
@@ -83,17 +94,21 @@ function setup(ctx, learning) {
                     }
 
                     // Auto-Fixer logic (safe mode: no buffer output to prevent IDE crash)
-                    if (cmdLine && exitCode !== 0) {
+                    if (!disposed && cmdLine && Number.isInteger(exitCode) && exitCode !== 0) {
                         const fixedCmd = autofix.evaluate(cmdLine, '');
-                        if (fixedCmd) {
+                        if (fixedCmd && Policy.evaluateCommand(fixedCmd, getPolicy()).allowed) {
                             const fixKey = tid + ':' + cmdLine;
                             const lastFix = _autoFixedCmds.get(fixKey) || 0;
                             if (Date.now() - lastFix > 10000) {
                                 _autoFixedCmds.set(fixKey, Date.now());
-                                console.log(`[Grav] Auto-Fixing: ${cmdLine} -> ${fixedCmd}`);
+                                console.log(`[Grav] Auto-Fix suggestion: ${fixedCmd}`);
 
-                                e.terminal.sendText(`echo "🛠️ [Grav Auto-Fix] Running: ${fixedCmd}"`);
-                                e.terminal.sendText(fixedCmd);
+                                // Suggestions are the default; explicit permission is required for execution.
+                                const policy = getPolicy();
+                                if (!disposed && policy.autoFixEnabled === true && Policy.canAct(policy) &&
+                                    !/[\r\n;&|`$<>\\]/.test(fixedCmd) && Policy.evaluateCommand(fixedCmd, policy).allowed) {
+                                    e.terminal?.sendText(fixedCmd);
+                                }
                             }
                         }
                     }

@@ -1,7 +1,10 @@
 'use strict';
 
+const { createJobTracker } = require('./job-tracker');
 const MAX_TRACE = 60;
 const MAX_FEEDBACK = 20;
+const text = value => typeof value === 'string' ? value.slice(0, 2000) : '';
+const metadata = value => { try { const raw = JSON.stringify(value); return raw.length <= 8000 ? JSON.parse(raw) : null; } catch (_) { return null; } };
 
 function formatClock(ts) {
     const d = new Date(ts);
@@ -15,6 +18,7 @@ function clampArray(items, max) {
 }
 
 function createObservabilityState(saved = {}) {
+    const jobs = createJobTracker(saved.jobState);
     const state = {
         nextId: typeof saved.nextId === 'number' && saved.nextId > 0 ? saved.nextId : 1,
         trace: clampArray(saved.trace, MAX_TRACE),
@@ -37,13 +41,25 @@ function createObservabilityState(saved = {}) {
             id: 'trace-' + state.nextId++,
             ts,
             time: formatClock(ts),
-            source: event.source || 'app',
-            action: event.action || 'info',
-            label: event.label || '',
-            pattern: event.pattern || '',
-            cmd: event.cmd || '',
-            reason: event.reason || '',
-            tool: event.tool || '',
+            source: text(event.source) || 'app',
+            action: text(event.action) || 'info',
+            label: text(event.label) || '',
+            pattern: text(event.pattern) || '',
+            cmd: text(event.cmd) || '',
+            reason: text(event.reason) || '',
+            decision: event.decision || null,
+            reasonCode: event.reasonCode || null,
+            matchedRules: Array.isArray(event.matchedRules) ? (metadata(event.matchedRules.slice(0, 32)) || []) : [],
+            scope: metadata(event.scope || null),
+            policyVersion: event.policyVersion || null,
+            intentId: typeof event.intentId === 'string' ? event.intentId.slice(0, 300) : null,
+            identityEvidence: event.identityEvidence || null,
+            targetSessionId: event.targetSessionId || null,
+            adapterVersion: event.adapterVersion || null,
+            latencyMs: Number.isFinite(event.latencyMs) ? Math.max(0, event.latencyMs) : null,
+            outcome: event.outcome === 'attempted' || ((event.action === 'clicked' || event.action === 'native-accept') && !event.dryRun) ? 'attempted' : 'unknown',
+            relatedTraceId: event.relatedTraceId || null,
+            tool: text(event.tool) || '',
             dryRun: !!event.dryRun,
         };
         state.trace.unshift(entry);
@@ -57,13 +73,23 @@ function createObservabilityState(saved = {}) {
 
     function recordFeedback(kind, meta = {}) {
         const normalized = kind === 'falseNegative' ? 'falseNegative' : 'falsePositive';
+        let selected;
+        if (Object.prototype.hasOwnProperty.call(meta, 'traceId')) {
+            if (typeof meta.traceId !== 'string' || !meta.traceId) throw new Error('Invalid feedback traceId');
+            selected = state.trace.find(entry => entry.id === meta.traceId);
+            if (!selected) throw new Error('Feedback traceId is missing or expired: ' + meta.traceId);
+        }
         state.feedback[normalized]++;
-        const related = normalized === 'falsePositive'
+        const related = selected || ( normalized === 'falsePositive'
             ? (meta.related || state.lastClicked)
-            : (meta.related || state.lastBlocked || state.lastClicked);
+            : (meta.related || state.lastBlocked || state.lastClicked));
+        if (related) related.reviewerLegitimate = normalized === 'falseNegative';
 
         const entry = push({
             source: 'feedback',
+            relatedTraceId: related && related.id,
+            decision: related && related.decision, reasonCode: related && related.reasonCode,
+            matchedRules: related && related.matchedRules, scope: related && related.scope, policyVersion: related && related.policyVersion,
             action: normalized,
             label: meta.label || (related && (related.label || related.pattern)) || '',
             cmd: meta.cmd || (related && related.cmd) || '',
@@ -77,6 +103,7 @@ function createObservabilityState(saved = {}) {
 
     function snapshot(extra = {}) {
         return Object.assign({
+            jobMetrics: jobs.snapshot(),
             trace: state.trace.slice(0, 30),
             lastBlocked: state.lastBlocked,
             lastClicked: state.lastClicked,
@@ -90,6 +117,7 @@ function createObservabilityState(saved = {}) {
 
     function exportState() {
         return {
+            jobState: jobs.exportState(),
             nextId: state.nextId,
             trace: state.trace.slice(0, MAX_TRACE),
             feedback: {
@@ -104,6 +132,7 @@ function createObservabilityState(saved = {}) {
 
     return {
         exportState,
+        recordJobEvent: jobs.record,
         push,
         recordFeedback,
         snapshot,

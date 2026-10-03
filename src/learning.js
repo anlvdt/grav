@@ -1,12 +1,26 @@
 'use strict';
 
 const vscode = require('vscode');
-const { LEARN, SAFE_TERMINAL_CMDS, DEFAULT_BLACKLIST, COMMAND_CATEGORIES } = require('./constants');
-const { cfg, extractCommands, matchesBlacklist } = require('./utils');
+const { LEARN, SAFE_TERMINAL_CMDS, COMMAND_CATEGORIES } = require('./constants');
+const { cfg, extractCommands } = require('./utils');
+const { getEffectiveConfig } = require('./configuration');
+const Policy = require('./action-policy');
+const { redact } = require('./redaction');
+let policyProvider = null;
+const setPolicyProvider = provider => { policyProvider = provider; };
 
 let _learnData = {}, _learnEpoch = 0, _userWhitelist = [], _userBlacklist = [], _patternCache = [], _ctx = null, _wiki = null, _saveTimer = null;
 
-const init = (ctx, wikiRef) => { _ctx = ctx; _wiki = wikiRef; _userWhitelist = cfg('terminalWhitelist', []); _userBlacklist = cfg('terminalBlacklist', []); load(); };
+const refreshPolicy = () => {
+    _userWhitelist = [...cfg('terminalWhitelist', [])];
+    _userBlacklist = [...getEffectiveConfig(_ctx).terminalBlacklist];
+};
+const getThreshold = () => {
+    const value = cfg('learnThreshold', 3);
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(50, Math.ceil(value))) : 3;
+};
+const promotionEligible = d => d.conf >= LEARN.PROMOTE_THRESH && (d.approvals || 0) >= getThreshold();
+const init = (ctx, wikiRef) => { _ctx = ctx; _wiki = wikiRef; refreshPolicy(); load(); };
 
 const load = () => {
     if (!_ctx) return;
@@ -34,8 +48,29 @@ const save = () => {
 
 const flush = () => { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; } if (!_ctx) return; try { _ctx.globalState.update('learnData', _learnData); _ctx.globalState.update('learnEpoch', _learnEpoch); } catch (_) { } };
 
+// Execution telemetry is not evidence that a person approved a command.
+const recordObservation = (cmdLine, context = {}) => {
+    if (!cfg('learnEnabled', true)) return;
+    const cmds = extractCommands(cmdLine);
+    if (!cmds.length) return;
+    const now = Date.now();
+    _learnEpoch++;
+    for (const cmd of cmds) {
+        if (!_learnData[cmd]) _learnData[cmd] = { conf: 0, velocity: 0, obs: 0, rewards: [], history: [], contexts: {}, lastSeen: now, promoted: false, demoted: false };
+        const d = _learnData[cmd];
+        d.observations = (d.observations || 0) + 1;
+        if (Number.isInteger(context.exitCode)) d.results = (d.results || 0) + 1;
+        d.lastSeen = now;
+    }
+    save();
+};
+
 const recordAction = (cmdLine, action, context = {}) => {
     if (!cfg('learnEnabled', true)) return;
+    if (action !== 'approve' && action !== 'reject') return;
+    if (context.source !== 'user-approval') return recordObservation(cmdLine, context);
+    refreshPolicy();
+    if (action === 'approve' && evaluateCommand(cmdLine).decision === 'deny') return;
     const cmds = extractCommands(cmdLine);
     const now = Date.now();
     _learnEpoch++;
@@ -44,6 +79,9 @@ const recordAction = (cmdLine, action, context = {}) => {
         if (!_learnData[cmd]) { _learnData[cmd] = { conf: 0, velocity: 0, obs: 0, rewards: [], history: [], contexts: {}, lastSeen: now, promoted: false, demoted: false }; }
         const d = _learnData[cmd];
         d.obs++;
+        if (action === 'approve') d.approvals = (d.approvals || 0) + 1;
+        else d.rejections = (d.rejections || 0) + 1;
+        d.examples = [...new Set([...(d.examples || []), redact(cmdLine).slice(0, 200)])].slice(-5);
         d.lastSeen = now;
 
         let reward = action === 'approve' ? 1.0 : -1.0;
@@ -69,9 +107,9 @@ const recordAction = (cmdLine, action, context = {}) => {
         d.history.push({ t: now, c: d.conf, r: reward, e: _learnEpoch });
         if (d.history.length > LEARN.MAX_HISTORY) d.history = d.history.slice(-LEARN.MAX_HISTORY); // FIX: bounded
 
+        if (promotionEligible(d) && !d.promoted && !SAFE_TERMINAL_CMDS.includes(cmd) && !_userWhitelist.includes(cmd)) { d.promoted = true; suggestPromotion(cmd, d).catch(() => { d.promoted = false; }); }
         if (d.obs >= LEARN.OBSERVE_MIN) {
-            if (d.conf >= LEARN.PROMOTE_THRESH && !d.promoted && !SAFE_TERMINAL_CMDS.includes(cmd) && !_userWhitelist.includes(cmd)) { d.promoted = true; suggestPromotion(cmd, d); }
-            if (d.conf <= LEARN.DEMOTE_THRESH && !d.demoted && !_userBlacklist.includes(cmd)) { d.demoted = true; suggestDemotion(cmd, d); }
+            if (d.conf <= LEARN.DEMOTE_THRESH && !d.demoted && !_userBlacklist.includes(cmd)) { d.demoted = true; suggestDemotion(cmd, d).catch(() => { d.demoted = false; }); }
         }
     }
 
@@ -135,54 +173,36 @@ const generalizePatterns = () => {
     }
 };
 
-const getPromotedCommands = () => Object.entries(_learnData).filter(([, d]) => d.conf >= LEARN.PROMOTE_THRESH && d.obs >= LEARN.OBSERVE_MIN).map(([k]) => k);
+// Statistical candidates are suggestions only, never authorization.
+const getPromotedCommands = () => Object.entries(_learnData).filter(([, d]) => promotionEligible(d)).map(([k]) => k);
 
-const evaluateCommand = (cmdLine) => {
-    const blacklist = [...DEFAULT_BLACKLIST, ..._userBlacklist];
-    const whitelist = [...SAFE_TERMINAL_CMDS, ..._userWhitelist];
-    const blocked = matchesBlacklist(cmdLine, blacklist);
-    if (blocked) return { allowed: false, reason: `Blocked: "${blocked}"`, commands: [], confidence: -1 };
-    const cmds = extractCommands(cmdLine);
-    if (cmds.length === 0) return { allowed: false, reason: 'Could not parse command', commands: [], confidence: 0 };
-    const promoted = getPromotedCommands();
-    const fullWhitelist = [...whitelist, ...promoted, ..._patternCache];
-    const unknown = [];
-    let minConf = 1.0;
-    for (const cmd of cmds) {
-        if (fullWhitelist.includes(cmd)) continue;
-        if (_wiki) { const page = _wiki.query(cmd); if (page) { if (page.riskLevel === 'safe' && page.totalEvents >= LEARN.OBSERVE_MIN) { minConf = Math.min(minConf, page.confidence); continue; } if (page.riskLevel === 'caution' && page.confidence > 0) { minConf = Math.min(minConf, page.confidence * 0.5); continue; } } }
-        const entry = _learnData[cmd];
-        if (entry && entry.conf > 0) { minConf = Math.min(minConf, entry.conf); continue; }
-        unknown.push(cmd);
-    }
-    if (unknown.length > 0) return { allowed: false, reason: `Unknown: ${unknown.join(', ')}`, commands: cmds, confidence: 0 };
-    return { allowed: true, reason: 'All whitelisted', commands: cmds, confidence: minConf };
+const evaluateCommand = (cmdLine, snapshot) => {
+    // The fallback's canonical blacklist includes defaults and user/project rules under its version.
+    // Supplied snapshots (including an invalid/null snapshot) remain authoritative; do not fill them in.
+    const policy = snapshot !== undefined ? snapshot : policyProvider ? policyProvider() : getEffectiveConfig(_ctx);
+    return Policy.evaluateCommand(cmdLine, policy);
 };
 
 const suggestPromotion = async (cmd, data) => {
-    const confPct = Math.round(data.conf * 100);
-    const pick = await vscode.window.showInformationMessage(`[Grav] "${cmd}" confidence ${confPct}% after ${data.obs} observations. Add to whitelist?`, 'Add', 'Ignore', 'Blacklist');
-    if (pick === 'Add') { _userWhitelist.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalWhitelist', _userWhitelist, vscode.ConfigurationTarget.Global); }
-    else if (pick === 'Blacklist') { _userBlacklist.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalBlacklist', _userBlacklist, vscode.ConfigurationTarget.Global); }
-    else { data.promoted = false; }
+    // P0 intentionally routes explicit policy edits to Manage Terminal instead of Add/Blacklist prompts.
+    const pick = await vscode.window.showInformationMessage(`[Grav] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)} after ${data.obs} observations. Learning does not grant authorization.`, 'Manage Terminal', 'Dismiss');
+    if (pick === 'Manage Terminal') await vscode.commands.executeCommand('grav.manageTerminal');
 };
 
 const suggestDemotion = async (cmd, data) => {
-    const confPct = Math.round(data.conf * 100);
-    const pick = await vscode.window.showWarningMessage(`[Grav] "${cmd}" confidence ${confPct}% — frequently rejected. Add to blacklist?`, 'Blacklist', 'Ignore');
-    if (pick === 'Blacklist') { _userBlacklist.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalBlacklist', _userBlacklist, vscode.ConfigurationTarget.Global); }
-    else { data.demoted = false; }
+    const pick = await vscode.window.showWarningMessage(`[Grav] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)}; frequently rejected. Review your policy manually.`, 'Manage Terminal', 'Dismiss');
+    if (pick === 'Manage Terminal') await vscode.commands.executeCommand('grav.manageTerminal');
 };
 
 const getStats = () => {
     const entries = Object.entries(_learnData).sort((a, b) => b[1].obs - a[1].obs).slice(0, 30);
-    return { epoch: _learnEpoch, totalTracked: Object.keys(_learnData).length, promoted: getPromotedCommands().length, patterns: _patternCache.length, commands: entries.map(([cmd, d]) => ({ cmd, conf: Math.round(d.conf * 100) / 100, velocity: Math.round(d.velocity * 1000) / 1000, obs: d.obs, status: d.conf >= LEARN.PROMOTE_THRESH && d.obs >= LEARN.OBSERVE_MIN ? 'promoted' : d.conf <= LEARN.DEMOTE_THRESH && d.obs >= LEARN.OBSERVE_MIN ? 'demoted' : d.obs < LEARN.OBSERVE_MIN ? 'observing' : d.conf > 0.3 ? 'learning' : d.conf < -0.3 ? 'suspicious' : 'neutral', lastSeen: new Date(d.lastSeen).toLocaleDateString() })) };
+    return { epoch: _learnEpoch, totalTracked: Object.keys(_learnData).length, candidates: getPromotedCommands().length, promoted: getPromotedCommands().length, patterns: _patternCache.length, commands: entries.map(([cmd, d]) => ({ cmd, provenance: { observations: d.observations || 0, humanApprovals: d.approvals || 0, humanRejections: d.rejections || 0, recordedResults: d.results || 0, examples: (d.examples || []).slice(-5) }, scoreLabel: 'suggestion score', candidateScore: Math.round(d.conf * 100) / 100, conf: Math.round(d.conf * 100) / 100, velocity: Math.round(d.velocity * 1000) / 1000, obs: d.obs, status: promotionEligible(d) ? 'candidate' : d.conf <= LEARN.DEMOTE_THRESH && d.obs >= LEARN.OBSERVE_MIN ? 'review-suggestion' : d.obs < LEARN.OBSERVE_MIN ? 'observing' : d.conf > 0.3 ? 'learning' : d.conf < -0.3 ? 'suspicious' : 'neutral', lastSeen: new Date(d.lastSeen).toLocaleDateString() })) };
 };
 
 const getData = () => _learnData;
 const getEpoch = () => _learnEpoch;
-const getWhitelist = () => _userWhitelist;
-const getBlacklist = () => _userBlacklist;
+const getWhitelist = () => { refreshPolicy(); return [..._userWhitelist]; };
+const getBlacklist = () => { refreshPolicy(); return [..._userBlacklist]; };
 const getPatternCache = () => _patternCache;
 
 /**
@@ -215,4 +235,4 @@ const purgeBadEntries = () => {
     return count;
 };
 
-module.exports = { init, flush, recordAction, evaluateCommand, getPromotedCommands, getStats, getData, getEpoch, getWhitelist, getBlacklist, getPatternCache, purgeBadEntries };
+module.exports = { init, setPolicyProvider, refreshPolicy, flush, recordObservation, recordAction, evaluateCommand, getPromotedCommands, getStats, getData, getEpoch, getWhitelist, getBlacklist, getPatternCache, purgeBadEntries };

@@ -1,12 +1,43 @@
 (function () {
     'use strict';
-    if (window.__gravLoaded) return;
-    window.__gravLoaded = true;
+    if (window.__gravRuntime) window.__gravRuntime.dispose();
+    var disposed = false, scrollHandler = null, timers = new Set(), observers = [], requests = new Set();
+    var nativeTimeout = window.setTimeout.bind(window), nativeInterval = window.setInterval.bind(window);
+    function setTimeout(fn, ms) {
+        var id = nativeTimeout(function() { timers.delete(id); if (!disposed) fn(); }, ms);
+        timers.add(id); return id;
+    }
+    function setInterval(fn, ms) {
+        var id = nativeInterval(function() { if (!disposed) fn(); }, ms);
+        timers.add(id); return id;
+    }
+    var NativeXHR = window.XMLHttpRequest;
+    function XMLHttpRequest() { var request = new NativeXHR(); requests.add(request); request.addEventListener('loadend', function() { requests.delete(request); }); return request; }
+    var Policy = /*{{ACTION_POLICY}}*/null;
+    Policy = Policy || window.__gravPolicy;
+    var coordinator = Policy.createCoordinator(window, "injected-dom");
+    var pendingActions = new Set();
+    function cancelActions() { pendingActions.forEach(function(id) { window.clearTimeout(id); timers.delete(id); }); pendingActions.clear(); coordinator.cancelPending(); }
+    var scheduler = Policy.createEventScheduler(function() { scanAndClick(); }, { setTimeout: setTimeout, clearTimeout: window.clearTimeout.bind(window), delay: 50 });
+    var initialPolicy = /*{{POLICY}}*/null;
+    var policy = { enabled: false, paused: true, dryRun: true, blacklist: [] };
+    var policyExpiresAt = 0;
+    function canAct() { return !disposed && !!Policy && coordinator.snapshot().currentOwner && !coordinator.snapshot().reasonCode && typeof policy.policyVersion === 'string' && Date.now() < policyExpiresAt && Policy.canAct(policy); }
+    var runtimeController = window.__gravRuntime = { updateConfig: function(c) { applyConfig(c); }, dispose: function() {
+        disposed = true; cancelActions(); scheduler.cancel();
+        timers.forEach(function(id) { window.clearInterval(id); window.clearTimeout(id); }); timers.clear();
+        observers.forEach(function(observer) { observer.disconnect(); });
+        requests.forEach(function(request) { request.abort(); }); requests.clear();
+        if (scrollHandler) window.removeEventListener('scroll', scrollHandler, true);
+        if (window.__gravRuntime === runtimeController) { window.__gravTimers = []; window.__gravLoaded = false; delete window.__gravRuntime; }
+    } };
 
     // Cleanup existing timers and handlers
     if (window.__gravTimers) { window.__gravTimers.forEach(clearInterval); window.__gravTimers = []; }
     if (window.__gravScrollHandler) { window.removeEventListener('scroll', window.__gravScrollHandler, true); window.__gravScrollHandler = null; }
-    if (window.__gravApproveObserver) { try { window.__gravApproveObserver.disconnect(); } catch (_) { } window.__gravApproveObserver = null; }
+    if (window.__gravApproveObserver) { try { window.__gravApproveObserver.disconnect(); } catch { } window.__gravApproveObserver = null; }
+
+    window.__gravTimers = [];
 
     // Config
     var PAUSE_MS = /*{{PAUSE_MS}}*/7000;
@@ -21,6 +52,7 @@
     // Corrupt-banner suppression
     (function () {
         var dismiss = function () {
+            if (!canAct()) return;
             var toasts = document.querySelectorAll('.notifications-toasts .notification-toast, .notification-list-item');
             toasts.forEach(function (el) {
                 var text = (el.textContent || '').toLowerCase();
@@ -50,15 +82,15 @@
                 (function (port) {
                     pending++;
                     var x = new XMLHttpRequest();
-                    x.open('GET', 'http://127.0.0.1:' + port + '/grav-status?t=' + Date.now(), true);
+                    x.open('GET', 'http://127.0.0.1:' + port + '/grav-status?surfaceUrl=' + encodeURIComponent(location.href) + '&t=' + Date.now(), true);
                     x.timeout = 800;
                     x.onload = function () {
-                        if (found) return;
+                        if (found || disposed) return;
                         if (x.status === 200) {
                             try {
                                 var c = JSON.parse(x.responseText);
-                                if (typeof c.enabled === 'boolean') { found = true; BRIDGE_PORT = port; _scanning = false; if (cb) cb(port, c); }
-                            } catch (_) { }
+                                if (!disposed && typeof c.enabled === 'boolean') { found = true; BRIDGE_PORT = port; _scanning = false; if (cb) cb(port, c); }
+                            } catch { }
                         }
                         if (--pending <= 0 && !found) batch(end + 1);
                     };
@@ -70,28 +102,50 @@
         batch(BRIDGE_PORT_START);
     };
 
-    var applyConfig = function (c) {
-        if (typeof c.enabled === 'boolean') window.__gravEnabled = c.enabled;
-        if (typeof c.scrollEnabled === 'boolean') window.__gravScrollEnabled = c.scrollEnabled;
-        if (Array.isArray(c.patterns)) PATTERNS = c.patterns;
-        if (c.pauseMs) PAUSE_MS = c.pauseMs;
-        if (c.scrollMs) SCROLL_MS = c.scrollMs;
-        if (c.approveMs) APPROVE_MS = c.approveMs;
+    var applyConfig = function (c, live) {
+        if (disposed || !c || !Policy) return;
+        if (live !== true && c.policyVersion !== policy.policyVersion) policyExpiresAt = 0;
+        if (c.policyVersion !== policy.policyVersion || c.paused || c.dryRun || !c.enabled) { cancelActions(); scheduler.cancel(); }
+        policy = Object.assign({}, c); coordinator.resume(c.resumeToken);
+        if (c.intentTombstones !== undefined && !Policy.mergeTombstones(window, c.intentTombstones)) {
+            policy.enabled = false; policyExpiresAt = 0; cancelActions(); scheduler.cancel(); return;
+        }
+        if (c.enabled && !c.paused) scheduler.resume();
+        if (live === true) policyExpiresAt = typeof c.policyVersion === 'string' ? Date.now() + 4500 : 0;
+        // A legacy bridge without the action-state contract cannot authorize automation.
+        if (typeof c.policyVersion !== 'string' || typeof c.paused !== 'boolean' || typeof c.dryRun !== 'boolean') policy.enabled = false;
+        if (Array.isArray(c.terminalBlacklist) && !Array.isArray(c.blacklist)) policy.blacklist = c.terminalBlacklist;
+        window.__gravEnabled = policy.enabled === true;
+        window.__gravScrollEnabled = c.scrollEnabled === true;
+        PATTERNS = Policy.resolvePatterns(Object.assign({}, policy, { patterns: c.patterns || PATTERNS }));
+        var pauseMs = c.pauseMs ?? c.scrollPauseMs;
+        if (Number.isFinite(pauseMs) && pauseMs >= 0) PAUSE_MS = pauseMs;
+        var approveMs = Policy.milliseconds(c.approveMs || c.approveIntervalMs, APPROVE_MS);
+        var scrollMs = Policy.milliseconds(c.scrollMs || c.scrollIntervalMs, SCROLL_MS);
+        if (approveMs !== APPROVE_MS && pollTimer) { clearInterval(pollTimer); timers.delete(pollTimer); pollTimer = setInterval(scanAndClick, approveMs * (c.eventScheduler ? 4 : 1)); }
+        if (scrollMs !== SCROLL_MS && scrollTimer) { clearInterval(scrollTimer); timers.delete(scrollTimer); scrollTimer = setInterval(scrollTick, scrollMs); }
+        APPROVE_MS = approveMs; SCROLL_MS = scrollMs;
     };
 
-    discoverBridge(function (port, c) { applyConfig(c); _pollErrors = 0; });
+    discoverBridge(function (port, c) { applyConfig(c, true); _pollErrors = 0; });
 
     var syncTimer = setInterval(function () {
-        if (BRIDGE_PORT === 0) { discoverBridge(function (p, c) { applyConfig(c); _pollErrors = 0; }); return; }
+        if (BRIDGE_PORT === 0) { discoverBridge(function (p, c) { applyConfig(c, true); _pollErrors = 0; }); return; }
         if (_pollErrors > 3) { BRIDGE_PORT = 0; _pollErrors = 0; return; }
         try {
             var x = new XMLHttpRequest();
-            x.open('GET', 'http://127.0.0.1:' + BRIDGE_PORT + '/grav-status?t=' + Date.now(), true);
+            x.open('GET', 'http://127.0.0.1:' + BRIDGE_PORT + '/grav-status?surfaceUrl=' + encodeURIComponent(location.href) + '&t=' + Date.now(), true);
             x.timeout = 1500;
-            x.onload = function () { if (x.status === 200) { _pollErrors = 0; applyConfig(JSON.parse(x.responseText)); } };
-            x.onerror = x.ontimeout = function () { _pollErrors++; };
+            x.onload = function () {
+                if (disposed) return;
+                try {
+                    if (x.status !== 200) throw new Error('bridge unavailable');
+                    applyConfig(JSON.parse(x.responseText), true); _pollErrors = 0;
+                } catch { _pollErrors++; policy.enabled = false; policyExpiresAt = 0; }
+            };
+            x.onerror = x.ontimeout = function () { _pollErrors++; policy.enabled = false; };
             x.send();
-        } catch (_) { _pollErrors++; }
+        } catch { _pollErrors++; policy.enabled = false; }
     }, 3000);
     window.__gravTimers.push(syncTimer);
 
@@ -99,39 +153,23 @@
     var REJECT_WORDS = /*{{REJECT_WORDS}}*/['Reject', 'Deny', 'Cancel', 'Dismiss', "Don't Allow", 'Decline', 'Reject all', 'Reject All', 'No', 'Disallow', 'Stop', 'Abort', 'Skip'];
     var EDITOR_SKIP = /*{{EDITOR_SKIP}}*/['Accept Changes', 'Accept Incoming', 'Accept Current', 'Accept Both', 'Accept Combination', 'Accept Line', 'Accept Word', 'Accept Suggestion'];
     var HIGH_CONF = /*{{HIGH_CONF}}*/{'Accept All': 1, 'Accept all': 1, 'Accept': 1, 'Approve': 1, 'Resume': 1, 'Run': 1, 'Retry': 1, 'Proceed': 1};
-    var LIM = /*{{LIMITS}}*/{BUTTON_LABEL_MIN: 2, BUTTON_LABEL_MAX: 60};
-    var _clickedAt = new WeakSet();
-    var _clickedIds = {};
+    var _LIM = /*{{LIMITS}}*/{BUTTON_LABEL_MIN: 2, BUTTON_LABEL_MAX: 60};
     var _globalCooldown = 0;
     var _runCooldown = 0;
 
     // Cooldown durations (ms) — injected from shared config
     var COOLDOWN = /*{{COOLDOWN}}*/{'Run': 5000, 'Accept': 1500, DEFAULT: 1000, GLOBAL: 500};
 
-    var getCooldown = function(text) { return COOLDOWN[text] || COOLDOWN.DEFAULT; };
-
     var isAlreadyClicked = function(btn, text) {
-        if (_clickedAt.has(btn)) return true;
-        if (btn.hasAttribute('data-grav-clicked')) return true;
         if (Date.now() < _globalCooldown) return true;
-        var timeout = getCooldown(text);
-        var key = text + '|' + (btn.getBoundingClientRect().top | 0);
-        if (_clickedIds[key] && Date.now() - _clickedIds[key] < timeout) return true;
-        var patternKey = 'pattern:' + text;
-        if (_clickedIds[patternKey] && Date.now() - _clickedIds[patternKey] < timeout) return true;
-        return false;
+        var intent = Policy.actionIdentity(coordinator, btn, text, policy);
+        return btn.getAttribute('data-grav-clicked') === 'true' || btn.getAttribute('data-grav-clicked') === intent.key;
     };
 
     var markClicked = function(btn, text) {
-        _clickedAt.add(btn);
-        try { btn.setAttribute('data-grav-clicked', 'true'); } catch(_) {}
-        var now = Date.now();
-        var key = text + '|' + (btn.getBoundingClientRect().top | 0);
-        _clickedIds[key] = now;
-        // Don't set pattern cooldown for Expand — it reveals new buttons that need immediate clicking
-        if (text !== 'Expand') _clickedIds['pattern:' + text] = now;
-        _globalCooldown = now + (text === 'Expand' ? 200 : COOLDOWN.GLOBAL);
-        if (text === 'Run' || text.indexOf('Run ') === 0) _runCooldown = now + COOLDOWN['Run'];
+        var intent = Policy.actionIdentity(coordinator, btn, text, policy);
+        try { btn.setAttribute('data-grav-clicked', intent.key); } catch {}
+        _globalCooldown = Date.now() + (text === 'Expand' ? 200 : COOLDOWN.GLOBAL);
     };
 
     var isRunCooldown = function() { return Date.now() < _runCooldown; };
@@ -141,7 +179,7 @@
         if (text.length <= pattern.length) return false;
         if (text.indexOf(pattern) !== 0) return false;
         var c = text.charAt(pattern.length);
-        return /[\s\u00a0.,;:!?\-\u2013\u2014()\[\]{}|/\\<>'"@#$%^&*+=~`]/.test(c);
+        return /[\s\u00a0.,;:!?\-\u2013\u2014()[\]{}|/\\<>'"@#$%^&*+=~`]/.test(c);
     };
 
     var findMatch = function (text) {
@@ -207,7 +245,7 @@
         try {
             var pageTitle = (document.title || '').toLowerCase();
             if (pageTitle.indexOf('grav') !== -1 && pageTitle.indexOf('dashboard') !== -1) return true;
-        } catch(_) {}
+        } catch {}
         
         // List of selectors that indicate non-agent contexts
         var EDITOR_SELECTORS = [
@@ -265,45 +303,6 @@
         return false;
     };
 
-    var extractCmd = function(btn) {
-        var p = btn.parentElement;
-        for (var lv = 0; lv < 8 && p; lv++) {
-            var els = p.querySelectorAll('code, pre, [class*="terminal"], [class*="command"], [class*="shell"], [class*="code-block"], [class*="codeBlock"]');
-            for (var i = els.length - 1; i >= 0; i--) {
-                var txt = (els[i].textContent || '').trim();
-                if (txt.length >= 2 && txt.length <= 2000) return txt;
-            }
-            p = p.parentElement;
-        }
-        return '';
-    };
-
-    var isBlocked = function(cmd) {
-        if (!cmd) return null;
-        var lower = cmd.toLowerCase().trim();
-        for (var i = 0; i < BLACKLIST.length; i++) {
-            var p = BLACKLIST[i].toLowerCase().trim();
-            if (!p) continue;
-            var isMulti = p.indexOf(' ') !== -1 || p.indexOf('|') !== -1;
-            if (isMulti) {
-                if (lower.indexOf(p) === 0) return BLACKLIST[i];
-                if (lower.indexOf('sudo ' + p) !== -1) return BLACKLIST[i];
-                if (lower.indexOf('nohup ' + p) !== -1) return BLACKLIST[i];
-                var seps = lower.split(/[;&|]+/);
-                for (var j = 0; j < seps.length; j++) {
-                    var seg = seps[j].replace(/^\\s*(sudo|nohup|env)\\s+/g, '').trim();
-                    if (seg.indexOf(p) === 0) return BLACKLIST[i];
-                }
-            } else {
-                var words = lower.split(/[ \t\n\r;&|]+/);
-                for (var k = 0; k < words.length; k++) {
-                    var w = words[k].replace(/^\\s*(sudo|nohup|env)\\s+/g, '').trim();
-                    if (w === p) return BLACKLIST[i];
-                }
-            }
-        }
-        return null;
-    };
 
     var isVisible = function(el) {
         if (!el) return false;
@@ -317,17 +316,17 @@
             if (rect.width === 0 || rect.height === 0) return false;
             // Element should be within reasonable viewport bounds (allow some overflow)
             if (rect.right < -100 || rect.left > window.innerWidth + 100 || rect.bottom < -100 || rect.top > window.innerHeight + 100) return false;
-        } catch (_) { return false; }
+        } catch { return false; }
         return true;
     };
 
+    var scanOffset = 0;
     var scanAndClick = function () {
-        if (!window.__gravEnabled) return;
+        if (disposed || Date.now() >= policyExpiresAt || !Policy || !window.__gravEnabled || policy.paused || policy.active === false) return;
         // Expanded selectors to catch more button types
         var btns = document.querySelectorAll('button, vscode-button, a.action-label, [role="button"], [role="menuitem"], input[type="button"], input[type="submit"], .monaco-button, .button, [class*="button"], [class*="btn"], [class*="action-label"], [class*="cursor-pointer"], [class*="clickable"]');
-        var foundButtons = [];
-        for (var i = 0; i < btns.length; i++) {
-            var b = btns[i];
+        for (var i = 0; i < Math.min(btns.length, 64); i++) {
+            var b = btns[(i + scanOffset) % btns.length];
             if (!isVisible(b)) continue;
             if (inEditorContext(b)) continue;
             var text = labelOf(b);
@@ -341,7 +340,7 @@
             }
             if (skipThis) continue;
             
-            var matched = findMatch(text);
+            var matched = Policy.interactionPattern(b, policy) || findMatch(text);
             if (!matched) continue;
             
             // Run cooldown check
@@ -363,66 +362,65 @@
                         }
                         el = el.parentElement;
                     }
-                } catch(_) {}
+                } catch {}
                 if (!inAgentPanel) continue;
             }
             
-            markClicked(b, text);
-            // After Expand: quick re-scan to catch newly revealed buttons
-            if (matched === 'Expand') {
-                setTimeout(scanAndClick, 400);
-                setTimeout(scanAndClick, 800);
-            }
-            // Delay the actual click to simulate human reaction and let frontend state settle
-            setTimeout(function() {
-                try {
-                    var rect = b.getBoundingClientRect();
-                    var cx = rect.left + rect.width / 2;
-                    var cy = rect.top + rect.height / 2;
-                    b.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }));
-                    b.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: false, view: window, clientX: cx, clientY: cy }));
-                    
-                    var evts = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
-                    var idx = 0;
-                    var pump = function() {
-                        if (idx >= evts.length) {
-                            try {
-                                b.focus();
-                                b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                                b.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                            } catch (_) { }
-                            return;
-                        }
-                        var ev = evts[idx++];
-                        if (ev === 'click') {
-                            try { b.click(); } catch (_) { }
-                        } else {
-                            var C = ev.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
-                            try {
-                                b.dispatchEvent(new C(ev, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: ev.indexOf('down') !== -1 ? 1 : 0, detail: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' }));
-                            } catch (_) {}
-                        }
-                        setTimeout(pump, 30); // 30ms delay between pointer events
-                    };
-                    pump();
-                } catch (_) { }
-            }, 300); // 300ms initial reaction delay
-            if (BRIDGE_PORT > 0) {
-                try {
-                    var x = new XMLHttpRequest();
-                    x.open('POST', 'http://127.0.0.1:' + BRIDGE_PORT + '/api/click-log', true);
-                    x.setRequestHeader('Content-Type', 'application/json');
-                    x.timeout = 1000;
-                    x.send(JSON.stringify({ button: text, pattern: matched, source: 'runtime' }));
-                } catch (_) { }
-            }
+            var evaluation = Policy.evaluateAction(matched, Policy.readsCommand(matched) ? Policy.extractCommand(b) : '', Policy.actionContext(b, policy));
+            if (!evaluation.allowed) { console.log('[GRAV:BLOCKED] ' + JSON.stringify(evaluation)); continue; }
+            if (policy.dryRun) { console.log('[GRAV:DRYRUN] ' + JSON.stringify(Object.assign({ p: matched, b: text, outcome: 'unknown' }, evaluation))); continue; }
+            if (!canAct()) continue;
+            var intent = Policy.actionIdentity(coordinator, b, text, policy);
+            var claim = coordinator.claim(intent, policy.policyVersion);
+            if (!claim.ok) continue;
+            _globalCooldown = Date.now() + APPROVE_MS + (text === 'Expand' ? 200 : COOLDOWN.GLOBAL);
+            // Capture identity and recheck current policy and command at the action endpoint.
+            (function(button, label, pattern, entry) {
+                var actionTimer = setTimeout(function() {
+                    pendingActions.delete(actionTimer);
+                    if (!canAct() || !isVisible(button) || button.isConnected === false || labelOf(button) !== label || !(findMatch(label) || Policy.interactionPattern(button, policy))) return;
+                    var cmd = Policy.readsCommand(pattern) ? Policy.extractCommand(button) : '';
+                    var ctx = Policy.actionContext(button, policy);
+                    var decision = Policy.evaluateAction(pattern, cmd, ctx);
+                    if (!decision.allowed || inEditorContext(button) || !coordinator.valid(entry, Policy.actionIdentity(coordinator, button, label, policy), policy.policyVersion)) return;
+                    // Scope selection is UI state, not actuation. It runs pre-claim
+                    // in the CDP executor; reaching it here means the decision was
+                    // re-evaluated — treat as a no-op rather than claiming twice.
+                    if (decision.switchScope) {
+                        if (!Policy.interaction.selectScope(ctx.interaction, decision.switchScope)) { entry.outcome = 'unknown'; coordinator.postcondition(entry, button); return; }
+                        entry.outcome = 'cancelled';
+                        return;
+                    }
+                    if (decision.optionIds) {
+                        coordinator.attempted(entry);
+                        if (!Policy.interaction.selectOptions(ctx.interaction, decision.optionIds)) { entry.outcome = 'unknown'; coordinator.postcondition(entry, button); return; }
+                        entry.outcome = 'unknown'; entry.postcondition = 'approval-ui-changed';
+                        if (decision.autoSubmit !== true) setTimeout(function() { Policy.interaction.submit(ctx.interaction); }, 300);
+                        return;
+                    }
+                    coordinator.attempted(entry); markClicked(button, label);
+                    try { button.click(); } catch { coordinator.postcondition(entry, button); return; }
+                    setTimeout(function() { coordinator.postcondition(entry, button); }, 1000);
+                    if (pattern === 'Expand') setTimeout(scanAndClick, APPROVE_MS);
+                    if (BRIDGE_PORT > 0) {
+                        try {
+                            var x = new XMLHttpRequest();
+                            x.open('POST', 'http://127.0.0.1:' + BRIDGE_PORT + '/api/click-log', true);
+                            x.setRequestHeader('Content-Type', 'application/json'); x.timeout = 1000;
+                            x.send(JSON.stringify(Object.assign({ button: label, pattern: pattern, source: 'runtime', surfaceUrl: location.href, cmd: cmd, intentId: entry.key, identityEvidence: entry.evidence, adapterVersion: 'adapter-v1', latencyMs: Date.now() - entry.at, outcome: 'attempted' }, decision)));
+                        } catch { }
+                    }
+                }, APPROVE_MS);
+                pendingActions.add(actionTimer);
+            })(b, text, matched, claim.entry);
+
         }
+        scanOffset += 64;
+        if (policy.eventScheduler && scanOffset < btns.length) scheduler.trigger(); else scanOffset = 0;
     };
 
     // MutationObserver with smart throttling
     var _flushTimer = null;
-    var _pendingMutations = [];
-    var _observerActive = false;
     
     try {
         var observer = new MutationObserver(function (mutations) {
@@ -453,23 +451,24 @@
                 if (hasRelevantChange) break;
             }
             
-            if (!hasRelevantChange) return;
+            if (disposed || !hasRelevantChange) return;
             
+            if (policy.eventScheduler) { scheduler.trigger(); return; }
             // Throttle scanAndClick calls
             if (!_flushTimer) { 
                 scanAndClick(); 
-                _flushTimer = setTimeout(function () { _flushTimer = null; }, 150); 
+                _flushTimer = setTimeout(function () { _flushTimer = null; }, APPROVE_MS);
             }
         });
+        observers.push(observer);
         observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'disabled', 'aria-hidden', 'style', 'hidden'] });
         window.__gravApproveObserver = observer;
-        _observerActive = true;
-    } catch (_) {} 
+    } catch {} 
 
     // Initial scan with delay
     setTimeout(scanAndClick, 1000);
-    // Standard poll — 1.5s minimum (slower to prevent "requires input" errors)
-    var pollTimer = setInterval(scanAndClick, Math.max(APPROVE_MS, 1500));
+    // Scan cadence follows the configured approval interval.
+    var pollTimer = setInterval(scanAndClick, APPROVE_MS * (policy.eventScheduler ? 4 : 1));
     window.__gravTimers.push(pollTimer);
 
     // Stick-to-bottom scroll
@@ -487,8 +486,9 @@
         return null;
     };
 
-    var scrollTimer = setInterval(function () {
-        if (!window.__gravEnabled || !window.__gravScrollEnabled) return;
+    var lastUserScroll = 0;
+    var scrollTick = function () {
+        if (!canAct() || !window.__gravScrollEnabled || Date.now() - lastUserScroll < PAUSE_MS) return;
         var panel = findChatPanel();
         if (!panel) return;
         var best = null, bestH = 0;
@@ -510,17 +510,21 @@
         if (was === undefined) { was = gap <= 150; _wasBottom.set(best, was); }
         if (was && gap > 5) { _justScrolled.add(best); best.scrollTop = best.scrollHeight; }
         setTimeout(function () { _autoScrolling = false; }, 200);
-    }, SCROLL_MS);
+    };
+    var scrollTimer = setInterval(scrollTick, SCROLL_MS);
     window.__gravTimers.push(scrollTimer);
 
-    window.__gravScrollHandler = function (e) {
+    window.__gravScrollHandler = scrollHandler = function (e) {
         var el = e.target;
         if (!el || el.nodeType !== 1) return;
         if (_justScrolled.has(el)) { _justScrolled.delete(el); return; }
         if (_autoScrolling) return;
+        lastUserScroll = Date.now();
         _wasBottom.set(el, (el.scrollHeight - el.scrollTop - el.clientHeight) <= 150);
     };
     window.addEventListener('scroll', window.__gravScrollHandler, true);
 
+    if (initialPolicy) applyConfig(initialPolicy);
+    window.__gravLoaded = true;
     console.log('[Grav] Runtime v3.0 loaded | Patterns:', PATTERNS.length);
 })();

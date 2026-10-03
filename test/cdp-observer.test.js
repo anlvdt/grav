@@ -50,7 +50,7 @@ assert(script.includes('fork bomb') || script.includes(':(){:|:&};:'), 'blacklis
 
 section('Version guard');
 assert(script.includes('window.__grav3'), 'has version guard');
-assert(script.includes("if (window.__grav3 === "), 'checks version before running');
+assert(script.includes("window.__gravObserver.version ==="), 'updates existing singleton before running');
 
 section('Core functions present');
 assert(script.includes('function report('), 'has report function');

@@ -12,7 +12,7 @@ Before implementing:
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- If ambiguity materially changes behavior or scope, ask one targeted question. Otherwise choose the simplest reasonable interpretation, state the assumption, and continue.
 
 ## 2. Simplicity First
 
@@ -63,3 +63,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+## Agent execution policy
+
+Follow the user's requested action through completion. Ask only when missing information would materially change scope, behavior, policy, data handling, credentials, or an irreversible external action. Otherwise choose the simplest reasonable interpretation, state the assumption, and continue. Complete authorized work and verification before requesting approval; approval should be the final step for deployment, publication, merging, or external writes. Do not add approval gates for reversible edits, read-only review, routine testing, or implementation choices.
+

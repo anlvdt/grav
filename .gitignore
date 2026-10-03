@@ -7,3 +7,9 @@ node_modules/
 # Repomix
 repomix-output.md
 repomix-output.txt
+
+# Local build/test artifacts
+.cache/
+artifacts/
+build.log
+scratch/

@@ -38,3 +38,10 @@ scratch_*.py
 build-vsce.js
 build.log
 media/dashboard-mock.html
+
+.cache/**
+artifacts/**
+docs/p0-validation.md
+docs/p1-p2-validation.md
+docs/antigravity-approval-research-2026-10-03.md
+docs/**

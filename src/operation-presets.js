@@ -63,7 +63,7 @@ const OPERATION_PRESETS = Object.freeze({
     },
     fast: {
         label: 'Fast',
-        description: 'Moves quickest through routine flows. Browser skip is off and blind native accepts are allowed.',
+        description: 'Moves quickest through routine flows. Browser skip is off; native accepts remain limited to verified edit commands.',
         approvePatterns: [
             'Accept',
             'Accept All',

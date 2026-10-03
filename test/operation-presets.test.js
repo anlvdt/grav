@@ -42,7 +42,8 @@ assert(!!fast, 'fast preset resolves');
 assert(fast.approvePatterns.includes('Allow'), 'fast includes Allow');
 assert(fast.approvePatterns.includes('Allow Once'), 'fast includes Allow Once');
 assert(fast.skipBrowserAgent === false, 'fast disables browser skip');
-assert(fast.skipTerminalAccept === false, 'fast disables native accept guard');
+assert(fast.skipTerminalAccept === false, 'fast preserves legacy setting; native edit verification remains mandatory');
+assert(fast.description.includes('verified edit commands') && !fast.description.includes('blind'), 'Fast description agrees with native guard');
 
 section('Mode normalization');
 assert(normalizeOperationMode('balanced') === 'balanced', 'known mode stays intact');

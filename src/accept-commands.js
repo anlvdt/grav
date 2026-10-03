@@ -119,6 +119,7 @@ module.exports = {
     SAFE_NATIVE_ACCEPT_COMMANDS,
     deriveDynamicAcceptCommands,
     isBlindAcceptCommand,
+    isSafeNativeAcceptCommand,
     partitionAcceptCommands,
     shouldExecuteAcceptCommand,
 };

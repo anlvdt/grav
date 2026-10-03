@@ -1,46 +1,43 @@
 #!/usr/bin/env node
-// ═══════════════════════════════════════════════════════════════
-//  Grav — Test Runner (zero dependencies)
-//  Run: node test/run-all.js
-// ═══════════════════════════════════════════════════════════════
 'use strict';
 
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const tempRoot = path.resolve(__dirname, '../.cache/test-tmp');
+fs.mkdirSync(tempRoot, { recursive: true });
+process.env.TMPDIR = tempRoot;
+process.env.TMP = tempRoot;
+process.env.TEMP = tempRoot;
 
-const testDir = __dirname;
-const files = fs.readdirSync(testDir)
-    .filter(f => f.endsWith('.test.js'))
-    .sort();
-
-console.log(`\nGrav Test Suite — ${files.length} test files\n`);
-
-let totalPassed = 0, totalFailed = 0;
-
-for (const file of files) {
-    const fp = path.join(testDir, file);
-    try {
-        const output = execSync(`node "${fp}"`, { encoding: 'utf8', timeout: 10000 });
-        const match = output.match(/Results: (\d+) passed, (\d+) failed/);
-        if (match) {
-            const p = parseInt(match[1]), f = parseInt(match[2]);
-            totalPassed += p;
-            totalFailed += f;
-            const icon = f > 0 ? 'x' : 'v';
-            console.log(`  ${icon} ${file}: ${p} passed, ${f} failed`);
+function runSuite(testDir = __dirname) {
+    const files = fs.readdirSync(testDir).filter(f => f.endsWith('.test.js')).sort();
+    console.log(`\nGrav Test Suite — ${files.length} test files\n`);
+    let totalPassed = 0, totalFailed = 0, infrastructureFailed = files.length ? 0 : 1;
+    for (const file of files) {
+        const result = spawnSync(process.execPath, [path.join(testDir, file)], { encoding: 'utf8', timeout: 10000 });
+        const output = result.stdout || '';
+        const summaries = [...output.matchAll(/^Results: (\d+) passed, (\d+) failed\s*$/gm)];
+        const match = summaries[0];
+        const valid = summaries.length === 1 && Number(match[1]) + Number(match[2]) > 0;
+        const passed = valid ? Number(match[1]) : 0, failed = valid ? Number(match[2]) : 0;
+        totalPassed += passed;
+        totalFailed += failed;
+        const infrastructureError = result.error || !valid || result.status === null || (result.status !== 0 && failed === 0);
+        if (infrastructureError) {
+            infrastructureFailed++;
+            console.log(`  x ${file}: ${result.error || (!valid ? 'missing, empty or ambiguous summary' : 'CRASHED')}`);
         } else {
-            console.log(`  ? ${file}: (no summary found)`);
+            console.log(`  ${failed ? 'x' : 'v'} ${file}: ${passed} passed, ${failed} failed`);
         }
-    } catch (e) {
-        totalFailed++;
-        console.log(`  x ${file}: CRASHED`);
-        if (e.stderr) console.log(`    ${e.stderr.split('\n')[0]}`);
+        if (infrastructureError || failed) {
+            console.log(output.trim());
+            if (result.stderr) console.log(result.stderr.trim());
+        }
     }
+    console.log(`\nTotal: ${totalPassed} passed, ${totalFailed} failed; ${infrastructureFailed} infrastructure failures\n`);
+    return totalFailed > 0 || infrastructureFailed > 0 ? 1 : 0;
 }
 
-console.log(`\n${'═'.repeat(50)}`);
-console.log(`Total: ${totalPassed} passed, ${totalFailed} failed`);
-console.log(`${'═'.repeat(50)}\n`);
-
-process.exit(totalFailed > 0 ? 1 : 0);
+if (require.main === module) process.exit(runSuite());
+module.exports = { runSuite };

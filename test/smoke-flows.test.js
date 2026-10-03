@@ -64,7 +64,7 @@ const observer = buildObserverScript(
     true
 );
 assert(observer.includes("matched === 'Run' || matched === 'Run Task' || matched === 'Execute'"), 'observer protects Run/Execute');
-assert(observer.includes("var isReviewInAgent = (text === 'Review Changes' || text === 'Review all' || text === 'Review All') && inAgentContext(b)"), 'observer allows Review Changes inside agent context');
+assert(observer.includes('if (isEditorAccept(text)) continue;'), 'observer rejects edit review labels consistently');
 
 section('Browser subagent skip flow');
 assert(observer.includes("if (matched === 'Skip' && !browserContext) continue;"), 'Skip only allowed in browser tool context');
@@ -80,7 +80,7 @@ assert(nativePolicy.filtered.includes('antigravity.accept'), 'blind native accep
 assert(nativePolicy.allowed.includes('workbench.action.chat.applyAll'), 'safe native applyAll stays enabled');
 
 section('Target discovery flow');
-assert(isAgentTarget({ type: 'page', url: 'file:///Applications/Antigravity/workbench.html', title: 'workspace' }), 'workbench target accepted');
+assert(isAgentTarget({ type: 'page', url: 'file:///mock/out/vs/code/electron-sandbox/workbench/workbench.html', title: 'workspace' }), 'workbench target accepted');
 assert(isAgentTarget({ type: 'iframe', url: 'vscode-webview://abc/antigravity-agent', title: 'Agent Chat' }), 'agent webview accepted');
 assert(!isAgentTarget({ type: 'iframe', url: 'vscode-webview://abc/settings', title: 'Settings' }), 'settings webview rejected');
 

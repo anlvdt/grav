@@ -5,9 +5,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { DEFAULT_PATTERNS, RISKY_PATTERNS, SAFE_TERMINAL_CMDS } = require('./constants');
-const { deriveDynamicAcceptCommands, partitionAcceptCommands } = require('./accept-commands');
+const { DEFAULT_PATTERNS, RISKY_PATTERNS, SAFE_TERMINAL_CMDS, DEFAULT_BLACKLIST } = require('./constants');
+const { deriveDynamicAcceptCommands, partitionAcceptCommands, isSafeNativeAcceptCommand } = require('./accept-commands');
 const { cfg } = require('./utils');
+const { getEffectiveConfig, setProjectProvider, withPolicyVersion } = require('./configuration');
+const Policy = require('./action-policy');
+const { manageRules } = require('./permission-rules');
+const { capabilityManifest } = require('./capabilities');
+const { summarizePilot } = require('./pilot-metrics');
+const { redact } = require('./redaction');
+let _resumeToken = 0, _nativeIdentityWarned = false, _hostBuild = 'unknown', _interactionHost = null;
 const injection = require('./injection');
 const learning = require('./learning');
 const wiki = require('./wiki');
@@ -26,6 +33,8 @@ try { cdp = require('./cdp'); } catch (_) { /* optional CDP module */ }
 const CDP_PORT = 9333;
 let _ctx, _enabled = true, _scrollOn = true, _stats = {}, _log = [], _totalClicks = 0;
 let _acceptTimer, _termLog = [], _acceptPaused = false, _dynamicAcceptCmds = [], _failedCmds = new Set();
+let _active = false;
+let _projectConfig = {};
 let _dryRun = false;  // Dry run: scan buttons but don't click
 let _skipBrowserAgent = false;  // Skip auto-click when browser agent is active
 let _nextAcceptDue = 0;         // Timestamp for next slow-cycle accept tick
@@ -36,38 +45,7 @@ let _lastFilteredSignature = '';
 const _nativeTraceCooldown = new Map();
 
 // ── Detection & Config ───────────────────────────────────────
-const isAntigravity = (() => {
-    const checkPaths = ['.antigravity', '.antigravity-ide', '.windsurf'];
-    return () => {
-        const n = (vscode.env.appName || '') + ' ' + (vscode.env.appRoot || '');
-        const l = n.toLowerCase();
-        if (l.includes('antigravity') || l.includes('windsurf') || (l.includes('codeium') && !l.includes('codeium.codeium'))) return true;
-        return checkPaths.some(p => fs.existsSync(path.join(os.homedir(), p, 'argv.json')));
-    };
-})();
-
-const ensureCdpInArgv = (() => {
-    const candidates = () => ['.antigravity-ide', '.antigravity', '.windsurf'].map(p => path.join(os.homedir(), p, 'argv.json')).filter(fs.existsSync);
-    return () => {
-        const argvPath = candidates()[0];
-        if (!argvPath) return false;
-        try {
-            const raw = fs.readFileSync(argvPath, 'utf8');
-            const portRegex = /"remote-debugging-port"\s*:\s*"?(\d+)"?/;
-            const match = raw.match(portRegex);
-            if (!match) {
-                const patched = raw.replace(/\n?\s*\}\s*$/, `,\n\t"remote-debugging-port": "${CDP_PORT}"\n}`);
-                fs.writeFileSync(argvPath, patched, 'utf8');
-                return true;
-            }
-            const [_, port] = match;
-            if (port === String(CDP_PORT) && raw.includes(`"${CDP_PORT}"`)) return false;
-            const fixed = raw.replace(portRegex, `"remote-debugging-port": "${CDP_PORT}"`);
-            fs.writeFileSync(argvPath, fixed, 'utf8');
-            return true;
-        } catch (e) { console.error('[Grav] argv patch:', e.message); return false; }
-    };
-})();
+const isAntigravity = () => /antigravity|windsurf/.test(((vscode.env.appName || '') + ' ' + (vscode.env.appRoot || '')).toLowerCase());
 
 // ── State & Handlers ─────────────────────────────────────────
 const getState = () => ({
@@ -80,11 +58,30 @@ const getState = () => ({
     termLog: _termLog,
     cdpConnected: cdp ? cdp.isConnected() : false,
     cdpSessions: cdp ? cdp.getSessionCount() : 0,
-    dryRun: _dryRun,
+    dryRun: getEffectiveConfig(_ctx).dryRun,
+    paused: _acceptPaused,
     projectPatterns: _projectPatterns,
+    runtime: getRuntime(),
     operationMode: normalizeOperationMode(cfg('operationMode', 'custom')),
 });
-const setState = (p) => { if (p.enabled !== undefined) _enabled = p.enabled; if (p.scrollOn !== undefined) _scrollOn = p.scrollOn; };
+const getPolicy = () => {
+    const config = getEffectiveConfig(_ctx);
+    const pauseReasonCode = _acceptPaused ? 'manual-pause' : !idle.isIdle() ? 'typing' : dashboard.getPanel()?.visible ? 'dashboard' : null;
+    const pauseReason = { 'manual-pause': 'Manual pause.', typing: 'Paused while the user is typing.', dashboard: 'Paused while the Grav dashboard is visible.' }[pauseReasonCode] || null;
+    return withPolicyVersion({ ...config, enabled: _active && _enabled && config.enabled, paused: !!pauseReasonCode, pauseReasonCode, pauseReason,
+        interactionHost: _interactionHost, resumeToken: _resumeToken, patterns: config.approvePatterns, blacklist: [...new Set([...DEFAULT_BLACKLIST, ...config.terminalBlacklist])], scrollEnabled: _scrollOn });
+};
+const getRuntime = (policy = getPolicy()) => Policy.runtimeState(policy, cdp?.getRuntimeState ? cdp.getRuntimeState(policy) : { connected: cdp ? cdp.isConnected() : false });
+const canAct = () => { const p = getPolicy(); return p.enabled && !p.paused && !p.dryRun; };
+const syncPolicy = () => { if (cdp && _isAntigravity) cdp.hotUpdate(); if (_ctx && _isAntigravity) injection.writeRuntimeConfig(_ctx); };
+const setState = (p) => {
+    if (p.enabled !== undefined) _enabled = p.enabled;
+    if (p.scrollOn !== undefined) _scrollOn = p.scrollOn;
+    if (p.stats !== undefined) _stats = p.stats;
+    if (p.log !== undefined) { _log = p.log; if (_ctx) _ctx.globalState.update('clickLog', _log); }
+    if (p.totalClicks !== undefined) { _totalClicks = p.totalClicks; _sessionState.approveCount = 0; if (cdp?.resetStats) cdp.resetStats(); }
+    onStatsUpdated(); syncPolicy();
+};
 const getSessionSafe = () => {
     const now = Date.now();
     const sessionMs = _sessionState.startMs ? now - _sessionState.startMs : 0;
@@ -109,23 +106,12 @@ const getSessionSafe = () => {
 const refreshBar = () => {
     if (!_sbMain) return;
 
-    // ── Main: Grav ON/OFF/Paused ──
-    if (!_enabled) {
-        _sbMain.text = `$(circle-slash) Grav`;
-        _sbMain.color = '#f87171';
-        _sbMain.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-        _sbMain.tooltip = `Grav [Off] | ${_totalClicks} clicks — click to open menu`;
-    } else if (_acceptPaused) {
-        _sbMain.text = `$(debug-pause) Grav`;
-        _sbMain.color = '#fbbf24';
-        _sbMain.backgroundColor = undefined;
-        _sbMain.tooltip = `Grav [Paused] | ${_totalClicks} clicks — click to open menu`;
-    } else {
-        _sbMain.text = `$(rocket) Grav`;
-        _sbMain.color = '#6ee7b7';
-        _sbMain.backgroundColor = undefined;
-        _sbMain.tooltip = `Grav [Active] | ${_totalClicks} clicks — click to open menu`;
-    }
+    const runtime = getRuntime();
+    const icons = { off: 'circle-slash', paused: 'debug-pause', 'dry-run': 'eye', disconnected: 'debug-disconnect', ready: 'rocket', unknown: 'question' };
+    _sbMain.text = `$(${icons[runtime.status]}) Grav`;
+    _sbMain.color = runtime.status === 'ready' ? '#6ee7b7' : runtime.status === 'off' ? '#f87171' : '#fbbf24';
+    _sbMain.backgroundColor = runtime.status === 'off' ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
+    _sbMain.tooltip = `Grav [${runtime.status}] | ${runtime.reason} | ${_totalClicks} click attempts — click to open menu`;
 
     // ── CDP: connection + scroll ──
     if (_sbCdp) {
@@ -165,7 +151,7 @@ const refreshBar = () => {
 
     // ── Dry Run ──
     if (_sbDry) {
-        if (_dryRun) {
+        if (runtime.status === 'dry-run') {
             _sbDry.text = `$(eye) DRY`;
             _sbDry.color = '#a78bfa';
             _sbDry.tooltip = `Dry Run: ON — scanning buttons without clicking\nClick to disable`;
@@ -177,7 +163,7 @@ const refreshBar = () => {
 };
 
 const onStatsUpdated = () => { _totalClicks = Object.values(_stats).reduce((a, b) => a + b, 0); refreshBar(); if (_ctx) { _ctx.globalState.update('stats', _stats); _ctx.globalState.update('totalClicks', _totalClicks); } };
-const onClickLogged = (d) => { if (_ctx) _ctx.globalState.update('clickLog', _log); dashboard.postMessage({ command: 'logUpdated', log: _log }); if (d.pattern) roi.recordClick(d.pattern); if (cfg('learnEnabled', true) && d.button) { const btn = d.button.trim(); const cmdMatch = btn.match(/[`']([^`']+)[`']/) || btn.match(/^(?:Run|Allow|Execute)\s+(.+)/i); if (cmdMatch) learning.recordAction(cmdMatch[1].trim(), 'approve', { project: vscode.workspace.workspaceFolders?.[0]?.name }); } };
+const onClickLogged = (d) => { recordTrace({ ...d, source: 'runtime', action: 'clicked', label: d.button, outcome: 'attempted' }); if (_ctx) _ctx.globalState.update('clickLog', _log); dashboard.postMessage({ command: 'logUpdated', log: _log }); if (d.pattern) roi.recordClick(d.pattern); if (cfg('learnEnabled', true) && d.button) { const btn = d.button.trim(); const cmdMatch = btn.match(/[`']([^`']+)[`']/) || btn.match(/^(?:Run|Allow|Execute)\s+(.+)/i); if (cmdMatch) learning.recordAction(cmdMatch[1].trim(), 'approve', { project: vscode.workspace.workspaceFolders?.[0]?.name }); } };
 
 const onChatEvent = (d) => {
     const now = Date.now();
@@ -227,8 +213,8 @@ const onTerminalEvent = (d) => {
     if (recent) return;
     _termLog.unshift({ time: new Date(now).toISOString().slice(11, 19), cmd, source: d.source || 'ui', _ts: now });
     if (_termLog.length > 100) _termLog.pop();
-    if (cfg('learnEnabled', true)) learning.recordAction(cmd, 'approve', { project: vscode.workspace.workspaceFolders?.[0]?.name });
-    recordTrace({ source: 'terminal', action: 'approved-command', label: cmd, cmd, reason: d.source || 'ui' });
+    // Execution observations do not establish user approval.
+    recordTrace({ source: 'terminal', action: 'observed-command', label: cmd, cmd, reason: d.source || 'ui' });
     dashboard.postMessage({ command: 'termLogUpdated', termLog: _termLog.slice(0, 30) });
 };
 const onPatternsDiscovered = (patterns) => {
@@ -237,13 +223,21 @@ const onPatternsDiscovered = (patterns) => {
     for (const p of patterns) { if (!discovered.includes(p) && !DEFAULT_PATTERNS.includes(p)) { discovered.push(p); changed = true; } }
     if (changed && _ctx) {
         _ctx.globalState.update('discoveredPatterns', discovered.slice(-50));
-        vscode.window.showInformationMessage(`[Grav] Discovered: ${patterns.slice(0, 3).join(', ')}`, 'Add to auto-click', 'Ignore').then(pick => {
-            if (pick === 'Add to auto-click') { const currentPatterns = cfg('approvePatterns', DEFAULT_PATTERNS); const dp = _ctx.globalState.get('disabledPatterns', []); for (const p of patterns) { if (!currentPatterns.includes(p) && !dp.includes(p)) currentPatterns.push(p); } vscode.workspace.getConfiguration('grav').update('approvePatterns', currentPatterns, vscode.ConfigurationTarget.Global); if (cdp) cdp.hotUpdate(); }
-        });
+        vscode.window.showInformationMessage(`[Grav] Discovered: ${patterns.slice(0, 3).join(', ')}`, 'Add to auto-click', 'Ignore').then(async pick => {
+            if (pick !== 'Add to auto-click' || !_active) return;
+            const currentPatterns = [...getEffectiveConfig(_ctx).approvePatterns];
+            const disabled = _ctx.globalState.get('disabledPatterns', []).map(p => p.toLowerCase());
+            for (const p of patterns) if (!currentPatterns.includes(p) && !disabled.includes(p.toLowerCase())) currentPatterns.push(p);
+            const config = vscode.workspace.getConfiguration('grav');
+            await config.update('approvePatterns', currentPatterns, vscode.ConfigurationTarget.Global);
+            await config.update('presetMode', 'custom', vscode.ConfigurationTarget.Global);
+            await config.update('operationMode', 'custom', vscode.ConfigurationTarget.Global);
+            onSave();
+        }).catch(e => console.warn('[Grav] Pattern update failed:', e.message));
     }
 };
-const onSave = () => { injection.writeRuntimeConfig(_ctx); if (cdp) cdp.hotUpdate(); refreshBar(); maybeTraceFilteredNative('save'); publishTrace(); };
-const onProjectConfigChange = () => { loadProjectConfig(); if (cdp) cdp.hotUpdate(); injection.writeRuntimeConfig(_ctx); maybeTraceFilteredNative('project'); publishTrace(); };
+const onSave = () => { syncPolicy(); startAcceptLoop(); refreshBar(); maybeTraceFilteredNative('save'); publishTrace(); };
+const onProjectConfigChange = () => { loadProjectConfig(); syncPolicy(); maybeTraceFilteredNative('project'); publishTrace(); };
 
 // ── Per-project patterns (.vscode/grav.json) ─────────────────
 let _projectPatterns = [];
@@ -251,22 +245,16 @@ const PROJ_CONFIG_FILE = '.vscode/grav.json';
 
 const loadProjectConfig = () => {
     const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) { _projectPatterns = []; return; }
+    if (!folders || folders.length === 0) { _projectPatterns = []; _projectConfig = {}; return; }
     const cfgPath = path.join(folders[0].uri.fsPath, PROJ_CONFIG_FILE);
     try {
         if (fs.existsSync(cfgPath)) {
             const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
             _projectPatterns = Array.isArray(raw.patterns) ? raw.patterns.filter(p => typeof p === 'string' && p.length > 0 && p.length <= 60) : [];
+            _projectConfig = { patterns: _projectPatterns, blacklist: Array.isArray(raw.blacklist) ? raw.blacklist.filter(p => typeof p === 'string' && p.length <= 500) : [], dryRun: raw.dryRun === true };
             if (_projectPatterns.length > 0) console.log(`[Grav] Project patterns (${_projectPatterns.length}):`, _projectPatterns.slice(0, 5));
-        } else { _projectPatterns = []; }
-    } catch (e) { _projectPatterns = []; console.warn('[Grav] grav.json parse error:', e.message); }
-};
-
-const getEffectivePatterns = () => {
-    const global = cfg('approvePatterns', DEFAULT_PATTERNS);
-    if (_projectPatterns.length === 0) return global;
-    const merged = [...new Set([..._projectPatterns, ...global])];
-    return merged;
+        } else { _projectPatterns = []; _projectConfig = {}; }
+    } catch (e) { _projectPatterns = []; _projectConfig = {}; console.warn('[Grav] grav.json parse error:', e.message); }
 };
 
 const getDynamicAcceptPolicy = () => ({
@@ -274,15 +262,36 @@ const getDynamicAcceptPolicy = () => ({
     skipBrowserAgent: _skipBrowserAgent,
 });
 
-const getRunnableDynamicAcceptCmds = () => partitionAcceptCommands(_dynamicAcceptCmds, getDynamicAcceptPolicy());
+const getRunnableDynamicAcceptCmds = () => {
+    const result = partitionAcceptCommands(_dynamicAcceptCmds, getDynamicAcceptPolicy());
+    const patterns = getEffectiveConfig(_ctx).approvePatterns.map(p => p.toLowerCase());
+    const allowed = [], filtered = [...result.filtered];
+    for (const cmd of result.allowed) {
+        const label = /applyall/i.test(cmd) ? 'accept all' : 'accept';
+        // Native APIs expose no proposed command, so only known edit-accept APIs are eligible.
+        if (isSafeNativeAcceptCommand(cmd) && patterns.includes(label)) allowed.push(cmd);
+        else filtered.push(cmd);
+    }
+    return { allowed, filtered };
+};
 
 const persistObservability = () => {
     if (_ctx) _ctx.globalState.update('observabilityState', _observability.exportState());
 };
 
+const onJobObservation = event => {
+    if (_observability.recordJobEvent?.(event)) persistObservability();
+};
 const getTraceSnapshot = () => {
     const dynamicAccept = getRunnableDynamicAcceptCmds();
     return _observability.snapshot({
+        executors: cdp?.getSessionSummaries?.() || [],
+        learningEvidence: learning.getStats?.().commands || [],
+        permissionProfile: getPolicy().permissionProfile || 'legacy',
+        permissionRules: (getPolicy().permissionRules || []).slice(0, 30),
+        capabilities: capabilityManifest({ name: vscode.env.appName, version: _hostBuild, cdpVerified: getRuntime().status === 'ready' }),
+        reconnectRecoveryMs: cdp?.getDebugState?.().recoveryMs ?? null,
+        metrics: summarizePilot(_observability.snapshot().trace.filter(t => t.source !== 'feedback').map(t => ({ intentId: (t.targetSessionId || t.source) + ':' + (t.intentId || t.id), legitimate: t.reviewerLegitimate, attempted: t.outcome === 'attempted', outcome: 'unknown', latencyMs: t.latencyMs })), { policyVersion: getPolicy().policyVersion, adapterVersion: 'adapter-v1', source: 'bounded-live-trace', labeled: false }, _observability.snapshot().jobMetrics),
         operationMode: normalizeOperationMode(cfg('operationMode', 'custom')),
         operationPresets: getOperationPresets(),
         filteredCommands: dynamicAccept.filtered,
@@ -300,15 +309,19 @@ const publishTrace = () => {
 };
 
 const recordTrace = (event) => {
-    _observability.push(event);
+    const policy = getPolicy();
+    const decision = event.decision ? {} : event.action === 'native-accept' ? Policy.evaluateAction('Accept', '', policy) :
+        event.cmd ? Policy.evaluateCommand(event.cmd, policy) : { decision: 'manual', reasonCode: 'unknown-context', matchedRules: [], scope: null, policyVersion: policy.policyVersion };
+    _observability.push({ ...decision, ...event });
     persistObservability();
     publishTrace();
 };
 
 const recordFeedback = (kind, meta = {}) => {
-    _observability.recordFeedback(kind, meta);
+    const entry = _observability.recordFeedback(kind, meta);
     persistObservability();
     publishTrace();
+    return entry;
 };
 
 const maybeTraceFilteredNative = (source = 'config') => {
@@ -358,6 +371,7 @@ const applyOperationPreset = async (mode, source = 'command') => {
     await config.update('approvePatterns', preset.approvePatterns, vscode.ConfigurationTarget.Global);
     await config.update('presetMode', preset.presetMode, vscode.ConfigurationTarget.Global);
     await config.update('operationMode', preset.operationMode, vscode.ConfigurationTarget.Global);
+    await config.update('dryRun', preset.dryRun, vscode.ConfigurationTarget.Global);
     await _ctx.globalState.update('disabledPatterns', preset.disabledPatterns);
 
     _enabled = preset.enabled;
@@ -394,10 +408,10 @@ const boostAcceptLoop = () => {
 
 const startAcceptLoop = () => {
     if (_acceptTimer) clearInterval(_acceptTimer);
-    const BASE_INTERVAL = Math.max(cfg('approveIntervalMs', 3000), 3000);
-    const FAST_INTERVAL = 800;
+    const BASE_INTERVAL = Math.max(cfg('approveIntervalMs', 1000), 100);
+    const FAST_INTERVAL = Math.min(BASE_INTERVAL, 800);
     _acceptTimer = setInterval(() => {
-        if (!_enabled || _acceptPaused || !idle.isIdle()) return;
+        if (!canAct()) return;
         // Skip native accept when Grav dashboard is the active panel
         if (dashboard.getPanel()?.visible) return;
         // Skip when CDP observer is connected and has active sessions —
@@ -416,34 +430,11 @@ const startAcceptLoop = () => {
             if (now < _nextAcceptDue) return;
             _nextAcceptDue = now + BASE_INTERVAL;
         }
-        const { allowed } = getRunnableDynamicAcceptCmds();
-        for (const cmd of allowed) {
-            if (_failedCmds.has(cmd)) continue;
-            traceNativeAccept(cmd, 'accept-loop');
-            vscode.commands.executeCommand(cmd).catch((err) => {
-                const errMsg = (err?.message || '').toLowerCase();
-
-                // Silently ignore permission / interaction errors — Antigravity throws these
-                // intermittently even for valid accept commands. Do not blacklist.
-                const isNoise = errMsg.includes('not permission') ||
-                    errMsg.includes('unexpected user interaction') ||
-                    errMsg.includes('permission');
-
-                if (isNoise) return; // suppress without logging
-
-                // Only blacklist commands that explicitly need user input arguments
-                const needsInput = errMsg.includes('requires') || errMsg.includes('argument') ||
-                    errMsg.includes('parameter') || errMsg.includes('input');
-
-                const isCore = cmd.includes('acceptall') || cmd.includes('antigravity.accept') ||
-                    cmd.includes('windsurf.accept') || cmd.includes('cascade.accept');
-
-                if (!isCore && needsInput) {
-                    _failedCmds.add(cmd);
-                    console.log(`[Grav] Excluded command (needs input): ${cmd}`);
-                    recordTrace({ source: 'native', action: 'needs-input', label: cmd, cmd, reason: 'command requires user input' });
-                }
-            });
+        // There is no verified native request identity/receipt to fence a repeat.
+        // Explicit Grav: Accept All remains available under the edit guard.
+        if (!_nativeIdentityWarned) {
+            _nativeIdentityWarned = true;
+            recordTrace({ source: 'native', action: 'blocked', decision: 'manual', reasonCode: 'native-identity-unavailable', reason: 'Native automatic approval needs a verified request identity. Use explicit Accept All for known edits.', outcome: 'unknown' });
         }
     }, FAST_INTERVAL);
 };
@@ -451,9 +442,18 @@ const startAcceptLoop = () => {
 // ── Activate ─────────────────────────────────────────────────
 async function activate(ctx) {
     _ctx = ctx;
+    try { _hostBuild = JSON.parse(fs.readFileSync(path.join(vscode.env.appRoot, 'package.json'), 'utf8')).version || 'unknown'; } catch (_) { _hostBuild = 'unknown'; }
+    try {
+        const product = JSON.parse(fs.readFileSync(path.join(vscode.env.appRoot, 'product.json'), 'utf8'));
+        _interactionHost = product.ideVersion === '2.5.5' && product.commit === 'ecfbad74d93962fc8ca485d93ab9b4f3d4cb6cf8' && process.platform === 'darwin' ? 'ide-2.5.5-unified-permission-dom' : null;
+    } catch (_) { _interactionHost = null; }
+    _active = true;
+    if (injection.setPolicyProvider) injection.setPolicyProvider(getPolicy);
+    if (learning.setPolicyProvider) learning.setPolicyProvider(getPolicy);
+    setProjectProvider(() => _projectConfig);
     _isAntigravity = isAntigravity();
     console.log(`[Grav] IDE: "${vscode.env.appName}" | Antigravity: ${_isAntigravity}`);
-    if (!_isAntigravity) { console.log('[Grav] Not Antigravity — disabled.'); return; }
+    // Native VS Code commands remain available; installation patching is IDE-specific.
 
     _stats = ctx.globalState.get('stats', {});
     _totalClicks = ctx.globalState.get('totalClicks', 0);
@@ -466,7 +466,6 @@ async function activate(ctx) {
     // Pattern migration
     const userPatterns = cfg('approvePatterns', null);
     const isFirstInstall = !userPatterns;
-    const VALID_PATTERNS = [...DEFAULT_PATTERNS, ...RISKY_PATTERNS];
 
     if (isFirstInstall) {
         const safePatterns = DEFAULT_PATTERNS.filter(p => !RISKY_PATTERNS.includes(p));
@@ -478,8 +477,8 @@ async function activate(ctx) {
             if (pick === 'Open Dashboard') vscode.commands.executeCommand('grav.dashboard');
         });
     } else if (Array.isArray(userPatterns)) {
-        let merged = userPatterns.filter(p => VALID_PATTERNS.includes(p));
-        let dp = ctx.globalState.get('disabledPatterns', []).filter(p => VALID_PATTERNS.includes(p));
+        let merged = userPatterns.filter(p => typeof p === 'string' && p.trim() && p.length <= 60);
+        let dp = ctx.globalState.get('disabledPatterns', []).filter(p => typeof p === 'string' && p.trim() && p.length <= 60);
         let changed = merged.length !== userPatterns.length || dp.length !== ctx.globalState.get('disabledPatterns', []).length;
         for (const p of DEFAULT_PATTERNS) { if (!merged.includes(p) && !dp.includes(p)) { RISKY_PATTERNS.includes(p) ? dp.push(p) : merged.push(p); changed = true; } }
         for (const p of RISKY_PATTERNS) { if (!merged.includes(p) && !dp.includes(p)) { dp.push(p); changed = true; } }
@@ -512,31 +511,44 @@ async function activate(ctx) {
     }, 3000);
     roi.init(ctx);
 
-    idle.init(ctx, { onIdleChange: (isIdle) => { console.log('[Grav] Idle:', isIdle); dashboard.postMessage({ command: 'idleChanged', idle: isIdle }); } });
+    idle.init(ctx, { onIdleChange: (isIdle) => { console.log('[Grav] Idle:', isIdle); dashboard.postMessage({ command: 'idleChanged', idle: isIdle }); syncPolicy(); refreshBar(); } });
 
     // CDP + Injection
-    if (ensureCdpInArgv()) vscode.window.showInformationMessage('[Grav] CDP configured. Quit & restart Antigravity fully.', 'OK');
-    if (cdp) {
+    if (_isAntigravity && _enabled && cfg('cdpEnabled', true)) {
+        try {
+            const result = require('./argv').ensureCdpInArgv({ appRoot: vscode.env.appRoot, port: cfg('cdpPort', 9333) });
+            if (result.changed) vscode.window.showInformationMessage('[Grav] CDP configured. Quit & restart the IDE fully.', 'OK');
+        } catch (e) { console.warn('[Grav] CDP profile unchanged:', e.message); }
+    }
+    if (cdp && _isAntigravity) {
         cdp.init({
-            onBlocked: (cmd, reason) => {
+            getPolicy, onJobObservation,
+            onBlocked: (cmd, reason, metadata = {}) => {
                 console.log(`[Grav Safety] Blocked: ${reason}`);
-                recordTrace({ source: 'cdp', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
+                recordTrace({ ...metadata, source: 'cdp', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
                 dashboard.postMessage({ command: 'commandBlocked', cmd: cmd.slice(0, 200), reason });
             },
             onClicked: (data) => {
-                _sessionState.approveCount++;
-                if (data.p) roi.recordClick(data.p);
+                if (!data.dryRun) {
+                    _sessionState.approveCount++;
+                    const pattern = data.p || 'click';
+                    _stats[pattern] = (_stats[pattern] || 0) + 1;
+                    _log.unshift({ time: new Date().toISOString().slice(11, 19), pattern, button: data.b || pattern });
+                    _log = _log.slice(0, 50);
+                    roi.recordClick(pattern); onStatsUpdated();
+                    _ctx.globalState.update('clickLog', _log);
+                }
                 recordTrace({
-                    source: 'cdp',
+                    ...data, source: 'cdp',
                     action: data.dryRun ? 'dry-run' : 'clicked',
                     pattern: data.p || '',
                     label: data.b || data.p || '',
                     cmd: data.cmd || '',
                     dryRun: !!data.dryRun,
-                    reason: data.dryRun ? 'observer scan only' : 'observer click',
+                    reason: data.reason || (data.dryRun ? 'observer scan only' : 'observer click attempt'),
                 });
                 refreshBar();
-                dashboard.postMessage({ command: 'logUpdated', log: cdp.getClickLog() });
+                dashboard.postMessage({ command: 'logUpdated', log: _log });
             },
             onChatEvent,
         });
@@ -545,21 +557,27 @@ async function activate(ctx) {
         if (currentVer !== lastCdpVer) { ctx.globalState.update('grav-cdp-version', currentVer); setTimeout(() => { if (cdp.isConnected()) cdp.hotUpdate(); }, 3000); }
     }
 
-    injection.hotUpdateRuntime(ctx);
-    const ver = ctx.extension?.packageJSON?.version || '0';
-    const lastVer = ctx.globalState.get('grav-version', '0');
-    if (!injection.isInjected() || ver !== lastVer) {
-        try { injection.inject(ctx); ctx.globalState.update('grav-version', ver); injection.clearCodeCache(); injection.patchChecksums(); if (!cdp || !cdp.isConnected()) setTimeout(() => vscode.commands.executeCommand('workbench.action.reloadWindow'), 1000); } catch (e) { console.error('[Grav] inject:', e.message); }
-    } else { injection.patchChecksums(); }
+    if (_isAntigravity && _enabled) {
+        const ver = ctx.extension?.packageJSON?.version || '0';
+        const lastVer = ctx.globalState.get('grav-version', '0');
+        try {
+            if (!injection.isInjected() || ver !== lastVer) {
+                if (injection.inject(ctx)) {
+                    await ctx.globalState.update('grav-version', ver);
+                    injection.patchChecksums();
+                }
+            } else injection.hotUpdateRuntime(ctx);
+        } catch (e) { console.error('[Grav] inject:', e.message); }
+    }
 
     // Bridge
     bridge.start(ctx, {
-        learning, wiki, injection, getState, setState, getSessionSafe,
-        onStatsUpdated, onClickLogged, onChatEvent,
+        learning, wiki, injection, getState, setState, getSessionSafe, getPolicy,
+        onStatsUpdated, onClickLogged, onChatEvent, onJobObservation,
         onTerminalEvent, onPatternsDiscovered,
-        onCommandBlocked: (cmd, reason) => {
+        onCommandBlocked: (cmd, reason, metadata = {}) => {
             console.log(`[Grav Safety] Blocked: ${reason}`);
-            recordTrace({ source: 'bridge', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
+            recordTrace({ ...metadata, source: 'bridge', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
             dashboard.postMessage({ command: 'commandBlocked', cmd: cmd.slice(0, 200), reason });
         },
     });
@@ -568,8 +586,8 @@ async function activate(ctx) {
     await discoverAcceptCommands();
     maybeTraceFilteredNative('activate');
     startAcceptLoop();
-    injection.writeRuntimeConfig(ctx);
-    try { terminal.setup(ctx, learning); } catch (e) { console.warn('[Grav] terminal.setup skipped:', e.message); }
+    if (_isAntigravity) injection.writeRuntimeConfig(ctx);
+    try { terminal.setup(ctx, learning, { getPolicy }); } catch (e) { console.warn('[Grav] terminal.setup skipped:', e.message); }
 
     // Status bar — multiple items
     const SB_BASE = -10000;
@@ -603,7 +621,7 @@ async function activate(ctx) {
             _dryRun = cfg('dryRun', false);
             _skipBrowserAgent = cfg('skipBrowserAgent', false);
             refreshBar();
-            if (cdp) cdp.hotUpdate();
+            syncPolicy(); startAcceptLoop();
             maybeTraceFilteredNative('config');
             publishTrace();
         }
@@ -617,12 +635,22 @@ async function activate(ctx) {
         );
         watcher.onDidChange(onProjectConfigChange);
         watcher.onDidCreate(onProjectConfigChange);
-        watcher.onDidDelete(() => { _projectPatterns = []; if (cdp) cdp.hotUpdate(); injection.writeRuntimeConfig(ctx); });
+        watcher.onDidDelete(onProjectConfigChange);
         ctx.subscriptions.push(watcher);
     }
 
     // Commands
     ctx.subscriptions.push(
+        vscode.commands.registerCommand('grav.removeRuntime', async () => {
+            _acceptPaused = true;
+            await vscode.workspace.getConfiguration('grav').update('enabled', false, vscode.ConfigurationTarget.Global);
+            syncPolicy();
+            if (cdp) await cdp.disconnect();
+            if (_isAntigravity && injection.eject()) {
+                await ctx.globalState.update('grav-version', '0');
+                vscode.window.showInformationMessage('[Grav] Runtime removed. Restart the IDE to unload the renderer script.');
+            }
+        }),
         vscode.commands.registerCommand('grav.statusMenu', async () => {
             const cdpCount = cdp ? cdp.getSessionCount() : 0;
             const operationMode = normalizeOperationMode(cfg('operationMode', 'custom'));
@@ -639,7 +667,7 @@ async function activate(ctx) {
         }),
         vscode.commands.registerCommand('grav.dashboard', () => dashboard.toggle(ctx, {
             learning, wiki, injection, roi, idle, getState, setState, getSessionSafe,
-            getTraceSnapshot, onSave, refreshBar, recordFeedback, getOperationPresets,
+            getTraceSnapshot, onSave, refreshBar, recordFeedback, getOperationPresets, onPolicyChanged: syncPolicy,
         })),
         vscode.commands.registerCommand('grav.diagnostics', async () => {
             const stats = learning.getStats();
@@ -657,6 +685,8 @@ async function activate(ctx) {
             const lines = [
                 `Grav v${ctx.extension?.packageJSON?.version || '0'}`,
                 `Platform: ${process.platform}`,
+                `Capabilities: ${JSON.stringify(trace.capabilities)}`,
+                `Pilot metrics: ${JSON.stringify(trace.metrics)}`,
                 ``,
                 `── CDP Engine ──`,
                 `Connected: ${cdp ? cdp.isConnected() : 'N/A'}`,
@@ -703,23 +733,39 @@ async function activate(ctx) {
                 `── Decision Trace (last ${trace.trace.length}) ──`,
                 ...(trace.trace.length ? trace.trace.slice(0, 12).map(t => `  [${t.time}] ${t.source}/${t.action} ${t.label || t.cmd || ''} ${t.reason ? `— ${t.reason}` : ''}`) : ['  (no trace events yet)']),
             ];
-            const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'text' });
+            const doc = await vscode.workspace.openTextDocument({ content: lines.map(redact).join('\n'), language: 'text' });
             await vscode.window.showTextDocument(doc);
         }),
         vscode.commands.registerCommand('grav.manageTerminal', async () => {
-            const actions = [{ label: '$(add) Add to Whitelist', action: 'addWhite' }, { label: '$(shield) Add to Blacklist', action: 'addBlack' }, { label: '$(search) Test Command', action: 'test' }, { label: '$(book) View Lists', action: 'viewAll' }];
+            const actions = [{ label: '$(key) Scoped Rules (exact/prefix, expiry, revoke)', action: 'rules' }, { label: '$(add) Add to Whitelist', action: 'addWhite' }, { label: '$(shield) Add to Blacklist', action: 'addBlack' }, { label: '$(search) Test Command', action: 'test' }, { label: '$(book) View Lists', action: 'viewAll' }];
             const pick = await vscode.window.showQuickPick(actions, { placeHolder: 'Manage Terminal Commands' });
             if (!pick) return;
-            if (pick.action === 'addWhite') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter safe command' }); if (cmd) { const wl = cfg('terminalWhitelist', []); wl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalWhitelist', wl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Grav] Added "${cmd}" to Whitelist.`); } }
+            if (pick.action === 'rules') { await manageRules(vscode, ctx, getPolicy); syncPolicy(); }
+            else if (pick.action === 'addWhite') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter executable (broad legacy grant) or literal argv prefix to grant' }); if (cmd) { const wl = cfg('terminalWhitelist', []); wl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalWhitelist', wl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Grav] Added "${cmd}" to Whitelist.`); } }
             else if (pick.action === 'addBlack') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter dangerous command' }); if (cmd) { const bl = cfg('terminalBlacklist', []); bl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalBlacklist', bl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Grav] Added "${cmd}" to Blacklist.`); } }
-            else if (pick.action === 'test') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter command to test' }); if (cmd) { const result = learning.evaluateCommand(cmd); const doc = await vscode.workspace.openTextDocument({ content: `${result.allowed ? 'ALLOWED' : 'BLOCKED'}\nReason: ${result.reason}\nCommands: ${result.commands.join(', ')}`, language: 'text' }); await vscode.window.showTextDocument(doc); } }
+            else if (pick.action === 'test') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter command to test' }); if (cmd) { const result = learning.evaluateCommand(cmd); const doc = await vscode.workspace.openTextDocument({ content: `${result.decision.toUpperCase()}\nReason: ${result.reason}\nReason code: ${result.reasonCode}\nScope: ${JSON.stringify(result.scope)}\nMatched rules: ${JSON.stringify(result.matchedRules)}\nPolicy version: ${result.policyVersion}`, language: 'text' }); await vscode.window.showTextDocument(doc); } }
             else if (pick.action === 'viewAll') { const doc = await vscode.workspace.openTextDocument({ content: `── Whitelist ──\n${cfg('terminalWhitelist', []).join('\n')}\n\n── Blacklist ──\n${cfg('terminalBlacklist', []).join('\n')}`, language: 'text' }); await vscode.window.showTextDocument(doc); }
+        }),
+        vscode.commands.registerCommand('grav.setScanSpeed', async () => {
+            const pick = await vscode.window.showQuickPick([{label:'Slow',ms:1800},{label:'Normal',ms:1200},{label:'Fast',ms:700}], {placeHolder:'Scan speed only; permission profile and grants stay unchanged'});
+            if (!pick) return;
+            await vscode.workspace.getConfiguration('grav').update('approveIntervalMs', pick.ms, vscode.ConfigurationTarget.Global);
+            await vscode.workspace.getConfiguration('grav').update('operationMode', 'custom', vscode.ConfigurationTarget.Global);
+            syncPolicy();
+        }),
+        vscode.commands.registerCommand('grav.configureAutopilot', async () => {
+            if (await require('./autopilot-profile').configureProfile(vscode)) syncPolicy();
+        }),
+        vscode.commands.registerCommand('grav.permissionProfile', async () => {
+            const profile = await vscode.window.showQuickPick([{label:'Observe',id:'observe',description:'No automatic approvals'},{label:'Edits',id:'edits',description:'Command-free edit/UI actions; terminal, browser and MCP approvals require manual review'},{label:'Terminal',id:'terminal',description:'Edits plus scoped exact/prefix rules only; legacy grants are inactive'},{label:'Legacy',id:'legacy',description:'Preserve existing P0 label/grant behavior'}], {placeHolder:'Grav permission profile, independent of scan speed'});
+            if (!profile) return;
+            await vscode.workspace.getConfiguration('grav').update('permissionProfile', profile.id, vscode.ConfigurationTarget.Global); syncPolicy();
         }),
         vscode.commands.registerCommand('grav.learnStats', async () => {
             const stats = learning.getStats();
             if (stats.commands.length === 0) { vscode.window.showInformationMessage('[Grav] No learning data yet'); return; }
-            const rows = stats.commands.map(s => `${s.cmd.padEnd(22)} conf:${String(s.conf).padEnd(7)} obs:${String(s.obs).padEnd(5)} ${s.status}`);
-            const doc = await vscode.workspace.openTextDocument({ content: `Epoch: ${stats.epoch} | Tracking: ${stats.totalTracked}\n\n${rows.join('\n')}`, language: 'text' });
+            const rows = stats.commands.map(s => `${s.cmd.padEnd(22)} suggestion-score:${String(s.candidateScore).padEnd(7)} obs:${String(s.obs).padEnd(5)} ${s.status}`);
+            const doc = await vscode.workspace.openTextDocument({ content: `Candidate suggestions only — scores are not probabilities or authorization.\nEpoch: ${stats.epoch} | Tracking: ${stats.totalTracked}\n\n${rows.join('\n')}`, language: 'text' });
             await vscode.window.showTextDocument(doc);
         }),
         vscode.commands.registerCommand('grav.applyOperationPreset', async () => {
@@ -733,25 +779,25 @@ async function activate(ctx) {
             const ok = await applyOperationPreset(pick.mode, 'command');
             if (ok) vscode.window.showInformationMessage(`[Grav] Applied ${pick.label} mode.`);
         }),
-        vscode.commands.registerCommand('grav.recordFalsePositive', async () => {
-            recordFeedback('falsePositive', { reason: 'manual feedback' });
+        vscode.commands.registerCommand('grav.recordFalsePositive', async (meta = {}) => {
+            try { recordFeedback('falsePositive', { ...meta, reason: 'manual feedback' }); } catch (e) { vscode.window.showWarningMessage(e.message); return { error: e.message }; }
             vscode.window.showInformationMessage('[Grav] Logged local feedback: false positive.');
         }),
-        vscode.commands.registerCommand('grav.recordMissedAction', async () => {
-            recordFeedback('falseNegative', { reason: 'manual feedback' });
+        vscode.commands.registerCommand('grav.recordMissedAction', async (meta = {}) => {
+            try { recordFeedback('falseNegative', { ...meta, reason: 'manual feedback' }); } catch (e) { vscode.window.showWarningMessage(e.message); return { error: e.message }; }
             vscode.window.showInformationMessage('[Grav] Logged local feedback: missed click.');
         }),
         vscode.commands.registerCommand('grav.refreshObserver', async () => { if (!cdp || !cdp.isConnected()) { vscode.window.showWarningMessage('[Grav] CDP not connected.'); return; } cdp.hotUpdate(); vscode.window.showInformationMessage('[Grav] Observer refreshed.'); }),
         vscode.commands.registerCommand('grav.forceReconnect', async () => {
             vscode.window.showInformationMessage('[Grav] Force reconnecting CDP...');
-            if (cdp && cdp.forceReconnect) {
+            if (cdp && _isAntigravity && cdp.forceReconnect) {
                 const ok = await cdp.forceReconnect();
                 if (ok) vscode.window.showInformationMessage('[Grav] CDP reconnected successfully.');
                 else vscode.window.showWarningMessage('[Grav] CDP reconnect failed. Check Output panel.');
             }
         }),
-        vscode.commands.registerCommand('grav.pauseAccept', () => { _acceptPaused = true; vscode.window.showInformationMessage('[Grav] Auto-accept paused.'); refreshBar(); }),
-        vscode.commands.registerCommand('grav.resumeAccept', () => { _acceptPaused = false; vscode.window.showInformationMessage('[Grav] Auto-accept resumed.'); refreshBar(); }),
+        vscode.commands.registerCommand('grav.pauseAccept', () => { _acceptPaused = true; syncPolicy(); vscode.window.showInformationMessage('[Grav] Auto-accept paused.'); refreshBar(); }),
+        vscode.commands.registerCommand('grav.resumeAccept', () => { _acceptPaused = false; _resumeToken++; syncPolicy(); vscode.window.showInformationMessage('[Grav] Auto-accept resumed.'); refreshBar(); }),
         vscode.commands.registerCommand('grav.purgeLearning', async () => {
             const count = learning.purgeBadEntries();
             const msg = count > 0
@@ -776,7 +822,8 @@ async function activate(ctx) {
         vscode.commands.registerCommand('grav.toggleScroll', async () => { _scrollOn = !_scrollOn; await vscode.workspace.getConfiguration('grav').update('autoScroll', _scrollOn, vscode.ConfigurationTarget.Global); onSave(); refreshBar(); }),
         vscode.commands.registerCommand('grav.stopAllTerminals', () => { 
             let count = 0; 
-            for (const term of vscode.window.terminals) { 
+            for (const term of vscode.window.terminals) {
+                if (!canAct()) break;
                 const name = term.name.toLowerCase();
                 // Protect common dev server names unless explicitly marked as agent
                 const isAgent = name.includes('agent') || name.includes('task') || name.includes('cascade') || name.includes('windsurf') || name.includes('antigravity');
@@ -792,6 +839,8 @@ async function activate(ctx) {
         vscode.commands.registerCommand('grav.acceptAll', async () => {
             const { allowed } = getRunnableDynamicAcceptCmds();
             for (const cmd of allowed) {
+                if (!canAct()) break;
+                if (!getRunnableDynamicAcceptCmds().allowed.includes(cmd)) continue;
                 traceNativeAccept(cmd, 'manual-accept-all');
                 try { await vscode.commands.executeCommand(cmd); } catch (_) { }
             }
@@ -803,7 +852,7 @@ async function activate(ctx) {
             _skipBrowserAgent = !_skipBrowserAgent;
             await vscode.workspace.getConfiguration('grav').update('skipBrowserAgent', _skipBrowserAgent, vscode.ConfigurationTarget.Global);
             refreshBar();
-            if (cdp) cdp.hotUpdate();
+            if (cdp && _isAntigravity) cdp.hotUpdate();
             vscode.window.showInformationMessage(`[Grav] Browser Skip ${_skipBrowserAgent ? 'ON' : 'OFF'}`);
         }),
         vscode.commands.registerCommand('grav.resetLearningData', async () => {
@@ -818,7 +867,10 @@ async function activate(ctx) {
     );
 }
 
-function deactivate() {
+async function deactivate() {
+    _active = false; _acceptPaused = true;
+    if (_ctx && _isAntigravity) injection.writeRuntimeConfig(_ctx);
+    if (cdp) await cdp.disconnect();
     if (_sbMain) _sbMain.dispose();
     if (_sbCdp) _sbCdp.dispose();
     if (_sbSkip) _sbSkip.dispose();
@@ -827,7 +879,6 @@ function deactivate() {
     bridge.stop();
 
     idle.stop();
-    if (cdp) try { cdp.disconnect(); } catch (_) { }
     learning.flush();
     wiki.flush();
     roi.flush();

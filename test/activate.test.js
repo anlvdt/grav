@@ -69,6 +69,28 @@ Module._resolveFilename = function(request, parent) {
 };
 require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: vscode };
 
+// Lifecycle smoke tests must never patch the developer's real IDE/profile or bind ports.
+const calls = { inject: 0, argv: 0, cache: 0 };
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+    if (parent?.filename === path.join(extPath, 'src/extension.js')) {
+        if (request === './argv') return { ensureCdpInArgv: () => {
+            calls.argv++;
+            return { changed: false, path: '/mock/argv.json', backupPath: null, port: 9333 };
+        } };
+        if (request === './injection') return {
+            setPolicyProvider() {}, isInjected: () => false,
+            inject: () => { calls.inject++; return true; },
+            patchChecksums: () => true, writeRuntimeConfig: () => true,
+            hotUpdateRuntime: () => true, eject: () => true,
+            clearCodeCache: () => { calls.cache++; },
+        };
+        if (request === './cdp') return null;
+        if (request === './bridge') return { start() {}, stop() {} };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+};
+
 (async () => {
     try {
         const ext = require(path.join(extPath, 'src/extension.js'));
@@ -80,6 +102,9 @@ require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports
         };
         await ext.activate(ctx);
         assert(mockSubs.length > 0, 'activation registers subscriptions');
+        assert(calls.inject === 1, 'supported host injection uses stub');
+        assert(calls.argv === 1, 'supported host argv configuration uses stub');
+        assert(calls.cache === 0, 'activation does not clear IDE cache');
         ext.deactivate();
     } catch (e) {
         assert(false, e && e.message ? e.message : String(e));
