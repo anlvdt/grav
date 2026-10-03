@@ -188,6 +188,55 @@ function createJobProducer(options = {}) {
                 emit(++job.seq + ':' + jid, { jobId: jid, type: 'progress', sequence: job.seq, phase: 'execution' });
             }
         }
+
+        reconcileSubagents(state, jid);
+    }
+
+    // Subagent states are keyed by subagent conversationId. Each is a
+    // distinct host job: {status, fullyIdle, killed, hasWaitingStep,
+    // firstWaitingStep, latestStep, lastRunStartMs, firstSeenMs}.
+    function reconcileSubagents(state, parentId) {
+        const subs = state && state.subagentStates;
+        if (!subs || typeof subs !== 'object') return;
+        const keys = Object.keys(subs);
+        for (let i = 0; i < keys.length; i++) {
+            const jid = keys[i];
+            const s = subs[jid];
+            if (!s || typeof jid !== 'string' || jid.length === 0 || jid.length > 300) continue;
+            const done = s.killed === true || (s.status === STATUS.IDLE && s.fullyIdle === true);
+            const latestFailed = s.latestStep && STEP_FAILED.has(s.latestStep.status);
+            let job = jobs.get(jid);
+            if (!job) {
+                job = { started: true, seq: 0, firstProgress: false, hadWaiting: false };
+                jobs.set(jid, job);
+                emit(++job.seq + ':' + jid, { jobId: jid, type: 'started', sequence: job.seq, parentJobId: parentId });
+                if (done) {
+                    // Subagent terminal before producer attached — still count it.
+                    job.dead = true;
+                    emit(++job.seq + ':' + jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed', sequence: job.seq });
+                    continue;
+                }
+            }
+            if (job.dead) continue;
+            if (s.hasWaitingStep && !job.hadWaiting) {
+                job.hadWaiting = true;
+                emit(++job.seq + ':' + jid, {
+                    jobId: jid, type: 'waiting', sequence: job.seq,
+                    waitReason: waitReason(s.firstWaitingStep), toolName: toolName(s.firstWaitingStep),
+                });
+            } else if (!s.hasWaitingStep && job.hadWaiting) {
+                job.hadWaiting = false;
+            }
+            if (done) {
+                job.dead = true;
+                emit(++job.seq + ':' + jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed', sequence: job.seq });
+                continue;
+            }
+            if (!s.hasWaitingStep && !job.firstProgress) {
+                job.firstProgress = true;
+                emit(++job.seq + ':' + jid, { jobId: jid, type: 'progress', sequence: job.seq, phase: 'subagent' });
+            }
+        }
     }
 
     function bind(provider) {

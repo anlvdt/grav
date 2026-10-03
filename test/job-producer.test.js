@@ -244,4 +244,89 @@ function failedState(id, extra = {}) {
     producer.dispose();
 }
 
+// ── 13. subagent jobs: separate jobId + parentJobId attribution ──
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-parent', {
+        subagentStates: {
+            'conv-sub-1': { status: 2, fullyIdle: false, killed: false, hasWaitingStep: false, latestStep: null, firstSeenMs: 1 },
+        },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$sub = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    const subStart = emitted.find(e => e.jobId === 'conv-sub-1' && e.type === 'started');
+    assert.ok(subStart);
+    assert.equal(subStart.parentJobId, 'conv-parent');
+    assert.ok(emitted.some(e => e.jobId === 'conv-sub-1' && e.type === 'progress'));
+    // subagent completes while parent still running
+    provider._fire(runningState('conv-parent', {
+        subagentStates: { 'conv-sub-1': { status: 1, fullyIdle: true, killed: false, hasWaitingStep: false, latestStep: { status: 3 } } },
+    }));
+    assert.ok(emitted.some(e => e.jobId === 'conv-sub-1' && e.type === 'completed'));
+    assert.ok(!emitted.some(e => e.jobId === 'conv-parent' && e.type === 'completed'));
+    producer.dispose();
+}
+
+// ── 14. subagent waiting + killed → waiting + failed ─────────
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-p2', {
+        subagentStates: {
+            'conv-sub-2': { status: 2, fullyIdle: false, killed: false, hasWaitingStep: true, firstWaitingStep: { status: 9, metadata: { toolCall: { name: 'permissionPrompt' } } }, latestStep: null },
+        },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$sb2 = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    const w = emitted.find(e => e.jobId === 'conv-sub-2' && e.type === 'waiting');
+    assert.ok(w); assert.equal(w.waitReason, 'approval');
+    provider._fire(runningState('conv-p2', {
+        subagentStates: { 'conv-sub-2': { status: 1, fullyIdle: true, killed: true, hasWaitingStep: false, latestStep: null } },
+    }));
+    assert.ok(emitted.some(e => e.jobId === 'conv-sub-2' && e.type === 'failed'));
+    producer.dispose();
+}
+
+// ── 15. subagent terminal-before-attach → started + completed ─
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-p3', {
+        subagentStates: {
+            'conv-sub-3': { status: 1, fullyIdle: true, killed: false, hasWaitingStep: false, latestStep: { status: 3 } },
+        },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$sb3 = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    const types = emitted.filter(e => e.jobId === 'conv-sub-3').map(e => e.type);
+    assert.deepEqual(types, ['started', 'completed']);
+    producer.dispose();
+}
+
+// ── 16. tracker records parentJobId on job + snapshot count ──
+{
+    const tracker = createJobTracker({}, { now: () => 1000 });
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-p4', {
+        subagentStates: { 'conv-sub-4': { status: 2, fullyIdle: false, killed: false, hasWaitingStep: false, latestStep: null } },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$sb4 = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => { emitted.push(d); tracker.record(d); }, rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    const snap = tracker.snapshot();
+    assert.equal(snap.observedJobs, 2);
+    assert.equal(snap.subagentJobs, 1);
+    assert.equal(snap.rejectedEvents, 0);
+    producer.dispose();
+}
+
 console.log(`Results: ${checks} passed, 0 failed`);
