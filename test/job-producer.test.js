@@ -356,6 +356,7 @@ function failedState(id, extra = {}) {
     producer.start(); global.window = _orig;
     assert.equal(emitted[0].jobId, 'conv-fallback');
     assert.equal(emitted[0].type, 'started');
+    assert.equal(producer.currentConversation(), null);
     producer.dispose();
 }
 
@@ -376,6 +377,74 @@ function failedState(id, extra = {}) {
     assert.equal(snap.subagentJobs, 1);
     assert.equal(snap.rejectedEvents, 0);
     producer.dispose();
+}
+
+// ── 19. retry budget attribution: conversation of the live job, tracker records recovery ──
+{
+    const tracker = createJobTracker({}, { now: () => 1000 });
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-budget', {
+        trajectorySlice: { trajectoryId: 'traj-a', stepsInSlice: [], lastStepError: null },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$rb = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => { emitted.push(d); tracker.record(d); }, rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    assert.equal(producer.currentConversation(), 'conv-budget');
+    provider._fire(runningState('conv-budget', {
+        status: 1, fullyIdle: true,
+        trajectorySlice: { trajectoryId: 'traj-a', stepsInSlice: [{ status: 7 }], lastStepError: 'boom', latestStep: { status: 7 } },
+    }));
+    assert.equal(producer.currentConversation(), null);
+    provider._fire(runningState('conv-budget', {
+        trajectorySlice: { trajectoryId: 'traj-b', stepsInSlice: [], lastStepError: null },
+    }));
+    assert.equal(producer.currentConversation(), 'conv-budget');
+    const order = emitted.filter(e => e.jobId === 'traj-b').map(e => e.type);
+    assert.deepEqual(order.slice(0, 2), ['started', 'recovery-start']);
+    assert.equal(tracker.snapshot().rejectedEvents, 0);
+    assert.equal(tracker.snapshot().recoveryAttempts, 1);
+    producer.dispose();
+    assert.equal(producer.currentConversation(), null);
+}
+
+// ── 20. snapshot: quota wait + terminal failure gate Retry clicks ──
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-snap', {
+        trajectorySlice: { trajectoryId: 'traj-s', stepsInSlice: [], lastStepError: null },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$sn = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    let snap = producer.snapshot();
+    assert.equal(snap.conversationId, 'conv-snap');
+    assert.equal(snap.jobId, 'traj-s');
+    assert.equal(snap.waitReason, null);
+    assert.equal(snap.terminal, false);
+    // Quota wait surfaces on the live conversation.
+    provider._fire(waitingState('conv-snap', 'quotaCheck', {
+        trajectorySlice: {
+            trajectoryId: 'traj-s',
+            stepsInSlice: [{ status: 9, metadata: { toolCall: { name: 'quotaCheck' }, toolSummary: 'quotaCheck' } }],
+            totalStepsLength: 1, lastStepError: null,
+        },
+    }));
+    snap = producer.snapshot();
+    assert.equal(snap.waitReason, 'quota');
+    // Terminal failure keeps a terminal snapshot row.
+    provider._fire(failedState('conv-snap', {
+        trajectorySlice: { trajectoryId: 'traj-s', stepsInSlice: [{ status: 7 }], lastStepError: 'boom', latestStep: { status: 7 } },
+    }));
+    snap = producer.snapshot();
+    assert.equal(snap.terminal, true);
+    assert.equal(snap.failed, true);
+    assert.equal(snap.conversationId, 'conv-snap');
+    producer.dispose();
+    assert.equal(producer.snapshot(), null);
 }
 
 console.log(`Results: ${checks} passed, 0 failed`);

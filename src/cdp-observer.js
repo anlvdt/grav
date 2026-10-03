@@ -55,7 +55,9 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     function canAct() { return !disposed && coordinator.snapshot().currentOwner && !coordinator.snapshot().reasonCode && typeof current.policyVersion === 'string' && Date.now() < policyExpiresAt && Policy.canAct(current); }
     function updateConfig(next) {
         if (current.policyVersion !== next.policyVersion || next.paused || next.dryRun || !next.enabled) { coordinator.cancelPending(); scheduler.cancel(); }
+        var used = current.policyVersion === next.policyVersion ? current.retryUsed : null;
         current = Object.assign({}, next);
+        if (used) current.retryUsed = used;
         coordinator.resume(next.resumeToken);
         if (!next.paused && next.enabled) scheduler.resume();
         policyExpiresAt = typeof current.policyVersion === 'string' && typeof current.paused === 'boolean' && typeof current.dryRun === 'boolean' ? Date.now() + 2000 : 0;
@@ -449,7 +451,16 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     function executeClick(btn, matched, text) {
         if (!canAct() || inEditorContext(btn) || btn.disabled || btn.isConnected === false || !(findMatch(labelOf(btn)) || Policy.interactionPattern(btn, current))) return;
         var cmd = Policy.readsCommand(matched) ? extractCmd(btn) : '';
-        var ctx = Policy.actionContext(btn, current);
+        var snap = jobProducer && jobProducer.snapshot ? jobProducer.snapshot() : null;
+        var conv = snap && typeof snap.conversationId === 'string' && snap.conversationId ? snap.conversationId
+            : (jobProducer && jobProducer.currentConversation ? jobProducer.currentConversation() : null);
+        var policy = Object.assign({}, current);
+        if (typeof conv === 'string' && conv) {
+            policy.conversationId = conv;
+            if (snap) { policy.waitReason = snap.waitReason; policy.terminal = snap.terminal === true; policy.failed = snap.failed === true; }
+            if (current.retryBudget && current.retryBudget.enabled === true && current.retryUsed) policy.retryBudget = Object.assign({}, current.retryBudget, { used: current.retryUsed });
+        }
+        var ctx = Policy.actionContext(btn, policy);
         var decision = Policy.evaluateAction(matched, cmd, ctx);
         if (!decision.allowed) { report('BLOCKED', Object.assign({ outcome: 'unknown' }, decision)); return; }
         // Scope selection is UI state, not actuation — no ledger claim. React
@@ -461,7 +472,13 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         }
         var intent = Policy.actionIdentity(coordinator, btn, text, current), claim = coordinator.claim(intent, current.policyVersion);
         if (!claim.ok) { report('BLOCKED', { decision: 'manual', reasonCode: claim.reasonCode, reason: 'Intent needs manual review.', outcome: 'unknown' }); return; }
-        if (!canAct() || !Policy.evaluateAction(matched, Policy.readsCommand(matched) ? extractCmd(btn) : '', Policy.actionContext(btn, current)).allowed || !coordinator.valid(claim.entry, Policy.actionIdentity(coordinator, btn, labelOf(btn), current), current.policyVersion)) return;
+        var live = Object.assign({}, current);
+        if (typeof conv === 'string' && conv) {
+            live.conversationId = conv;
+            if (snap) { live.waitReason = snap.waitReason; live.terminal = snap.terminal === true; live.failed = snap.failed === true; }
+            if (current.retryBudget && current.retryBudget.enabled === true && current.retryUsed) live.retryBudget = Object.assign({}, current.retryBudget, { used: current.retryUsed });
+        }
+        if (!canAct() || !Policy.evaluateAction(matched, Policy.readsCommand(matched) ? extractCmd(btn) : '', Policy.actionContext(btn, live)).allowed || !coordinator.valid(claim.entry, Policy.actionIdentity(coordinator, btn, labelOf(btn), live), current.policyVersion)) return;
         // Question answers need a claim (they actuate) but never click submit
         // directly: single-select auto-advances via the host onNextNoWrap timer
         // (~200ms); multi-select needs an explicit Continue click after state
@@ -476,6 +493,10 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         }
         coordinator.attempted(claim.entry); markClicked(btn, text);
         try { btn.click(); } catch(_) { coordinator.postcondition(claim.entry, btn); return; }
+        if (/^(?:retry|try again|resume(?:\s+conversation)?)$/i.test(matched) && typeof conv === 'string' && conv && decision.reasonCode === 'retry-within-budget') {
+            if (!current.retryUsed) current.retryUsed = {};
+            current.retryUsed[conv] = (Number.isInteger(current.retryUsed[conv]) ? current.retryUsed[conv] : 0) + 1;
+        }
         report('CLICK', Object.assign({ p: matched, b: text, cmd: cmd, intentId: intent.key, identityEvidence: intent.evidence, adapterVersion: 'adapter-v1', latencyMs: Date.now() - claim.entry.at, outcome: 'attempted' }, decision));
         setTimeout(function() { coordinator.postcondition(claim.entry, btn); }, 1000);
         if (matched === 'Expand') setTimeout(safeScanner, APPROVE_MS);

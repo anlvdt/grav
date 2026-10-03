@@ -162,23 +162,28 @@ function createJobProducer(options = {}) {
         const err = lastErrorOf(state);
         const latest = latestStepOf(state);
         const latestFailed = latest && STEP_FAILED.has(latest.status);
+        const convNow = conversationIdOf(state);
 
         if (!job) {
             if (!done && status !== undefined) {
-                const conv = conversationIdOf(state);
+                const conv = convNow;
                 const prev = conv ? conversationJobs.get(conv) : null;
                 job = { started: true, seq: 0, firstProgress: false, hadWaiting: false };
                 jobs.set(jid, job);
-                // Re-run in the same conversation = retry of the previous job.
-                if (prev && conv && prev !== jid) {
-                    const prevJob = jobs.get(prev);
-                    if (prevJob && prevJob.dead) {
-                        emit(job, jid, { jobId: jid, type: 'recovery-start', parentJobId: prev });
-                    }
-                }
                 const started = { jobId: jid, type: 'started', status: status };
-                if (conv && conv !== jid) { conversationJobs.set(conv, jid); started.parentJobId = conv; }
+                if (conv && conv !== jid) {
+                    started.parentJobId = conv;
+                    conversationJobs.set(conv, jid);
+                }
                 emit(job, jid, started);
+                // Re-run in the same conversation = retry of the previous job.
+                // started comes first: the tracker only records recovery on an existing job.
+                // A fallback job (no trajectoryId) is not registered, so a later
+                // trajectory does not inherit it as a retry.
+                const prevJob = prev && prev !== jid ? jobs.get(prev) : null;
+                if (prevJob && prevJob.dead) {
+                    emit(job, jid, { jobId: jid, type: 'recovery-start', parentJobId: prev });
+                }
             } else {
                 return;
             }
@@ -188,16 +193,19 @@ function createJobProducer(options = {}) {
 
         if (waitingStep && !job.hadWaiting) {
             job.hadWaiting = true;
+            job.waitReason = waitReason(waitingStep);
             emit(job, jid, {
                 jobId: jid, type: 'waiting',
-                waitReason: waitReason(waitingStep), toolName: toolName(waitingStep),
+                waitReason: job.waitReason, toolName: toolName(waitingStep),
             });
         } else if (!waitingStep && job.hadWaiting) {
             job.hadWaiting = false;
+            job.waitReason = null;
         }
 
         if (done) {
             job.dead = true;
+            job.failed = !!(err || latestFailed);
             if (err || latestFailed) {
                 emit(job, jid, { jobId: jid, type: 'failed', error: err ? String(err).slice(0, 200) : undefined });
             } else {
@@ -306,7 +314,49 @@ function createJobProducer(options = {}) {
         lastProvider = null;
     }
 
-    return { start: start, dispose: dispose, _locateProvider: locateProvider };
+    // Latest non-terminal conversation, so a Retry click can be attributed
+    // before it counts against the per-conversation budget. Subagent keys
+    // are not conversations.
+    function currentConversation() {
+        let latest = null;
+        conversationJobs.forEach(function (jid, conv) {
+            const job = jobs.get(jid);
+            if (!job || job.dead) return;
+            latest = conv;
+        });
+        return latest;
+    }
+
+    // Read-only snapshot of the live conversation for the click path:
+    // {conversationId, jobId, waitReason|null, terminal, failed}.
+    // A retry that rotated trajectoryId keeps one row on the conversation.
+    function snapshot() {
+        let latest = null;
+        conversationJobs.forEach(function (jid, conv) {
+            const job = jobs.get(jid);
+            if (!job || job.dead) return;
+            latest = {
+                conversationId: conv, jobId: jid,
+                waitReason: job.waitReason || null,
+                terminal: false, failed: false,
+            };
+        });
+        if (latest) return latest;
+        // No live trajectory. If the latest registered job died, report its
+        // terminal state so a Retry label on a quota/failed card stays manual.
+        let last = null;
+        conversationJobs.forEach(function (jid, conv) {
+            const job = jobs.get(jid);
+            if (job && job.dead) last = {
+                conversationId: conv, jobId: jid,
+                waitReason: job.waitReason || null,
+                terminal: true, failed: job.failed === true,
+            };
+        });
+        return last;
+    }
+
+    return { start: start, dispose: dispose, currentConversation: currentConversation, snapshot: snapshot, _locateProvider: locateProvider };
 }
 
 module.exports = { createJobProducer, browserSource: '(' + createJobProducer.toString() + ')' };

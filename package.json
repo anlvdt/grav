@@ -265,7 +265,27 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Skip auto-click when Browser Agent is active. Pauses Grav when Antigravity triggers a browser/computer-use agent."
-                }
+                },
+                "grav.retryBudget": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false
+                    },
+                    "additionalProperties": false,
+                    "description": "Automatic Retry/Resume clicks. Disabled by default. When enabled, Grav clicks Retry, Try Again, Resume or Resume Conversation at most maxPerConversation times per host conversation (1-8). Quota waits are not retries and never consume the budget.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": false
+                        },
+                        "maxPerConversation": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 8,
+                            "default": 1
+                        }
+                    }
+                },
             }
         }
     },
