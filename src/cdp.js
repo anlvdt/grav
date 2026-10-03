@@ -20,14 +20,71 @@
 const vscode = require('vscode');
 const http = require('http');
 
-const { DEFAULT_BLACKLIST, DEFAULT_PATTERNS, PRESET_PATTERNS } = require('./constants');
-const { cfg } = require('./utils');
+const { DEFAULT_BLACKLIST, DEFAULT_PATTERNS, PRESET_PATTERNS, SAFE_TERMINAL_CMDS } = require('./constants');
+const { cfg, isWithinRoot } = require('./utils');
 const { buildObserverScript } = require('./cdp-observer');
+const { runTargets } = require('./event-scheduler');
+const { createRecoverySupervisor } = require('./recovery-supervisor');
+const { attemptJournal } = require('./state');
+const Policy = require('./action-policy');
+const { getEffectiveConfig } = require('./configuration');
+
+let _getPolicy = null;
+let _policyTimer = null;
+function getPolicy() {
+    try {
+        const supplied = _getPolicy ? _getPolicy() : getEffectiveConfig();
+        if (!supplied) return { enabled: false };
+        const policy = { enabled: cfg('enabled', true), paused: false, dryRun: cfg('dryRun', false),
+            presetMode: cfg('presetMode', '1.24+'), approvePatterns: cfg('approvePatterns', DEFAULT_PATTERNS),
+            terminalWhitelist: cfg('terminalWhitelist', []), builtInGrants: SAFE_TERMINAL_CMDS, disabledPatterns: cfg('disabledPatterns', []), blacklist: [...DEFAULT_BLACKLIST, ...cfg('terminalBlacklist', [])],
+            scrollEnabled: cfg('autoScroll', true), scrollPauseMs: cfg('scrollPauseMs', 7000),
+            approveMs: cfg('approveIntervalMs', 1000), scrollMs: cfg('scrollIntervalMs', 800),
+            skipBrowserAgent: cfg('skipBrowserAgent', false), ...supplied };
+        policy.blacklist = [...new Set([...DEFAULT_BLACKLIST, ...(supplied.blacklist || supplied.terminalBlacklist || cfg('terminalBlacklist', []))])];
+        policy.approveMs = supplied.approveMs ?? supplied.approveIntervalMs ?? policy.approveMs;
+        policy.scrollMs = supplied.scrollMs ?? supplied.scrollIntervalMs ?? policy.scrollMs;
+        policy.patterns = Policy.resolvePatterns({ ...policy, patterns: supplied.patterns ?? supplied.approvePatterns }, PRESET_PATTERNS, DEFAULT_PATTERNS);
+        return policy;
+    } catch (_) { return { enabled: false }; }
+}
+async function updatePolicy() {
+    const epoch = _epoch;
+    const policy = getPolicy();
+    const snapshot = JSON.stringify(attemptJournal.isSaturated() ? { ...policy, enabled: false } : policy);
+    await runTargets([..._sessions.values()], async session => {
+        if (epoch !== _epoch || session.policyPending) return;
+        session.policyPending = true;
+        try {
+            const reply = await send('Runtime.evaluate', {
+                expression: `window.__gravObserver && window.__gravObserver.updateConfig(${snapshot})`, returnByValue: true,
+            }, session.sessionId);
+            if (epoch !== _epoch || ![..._sessions.values()].includes(session)) return;
+            const ack = reply && !reply.exceptionDetails && reply.result && reply.result.value;
+            session.policyAck = ack && ack.adapterVersion === 'adapter-v1' && ack.verified === true && ack.expiresAt > Date.now() && typeof policy.policyVersion === 'string' && ack.policyVersion === policy.policyVersion ?
+                { ...ack, expiresAt: Date.now() + 1500 } : ack ? { verified: false, reasonCode: ack.adapterVersion !== 'adapter-v1' ? 'adapter-version-mismatch' : ack.reasonCode || 'executor-unverified' } : null;
+        } catch (_) { session.policyAck = null; } finally { session.policyPending = false; }
+        session.stableAcks = session.policyAck?.verified ? (session.stableAcks || 0) + 1 : 0;
+        if (session.stableAcks >= 3) _reconnectAttempts = 0;
+        if (session.policyAck?.verified && _recoveryStartedAt) { _lastRecoveryMs = Date.now() - _recoveryStartedAt; _recoveryStartedAt = 0; }
+    });
+}
+
+function getRuntimeState(policy = getPolicy()) {
+    const session = [..._sessions.values()].find(s => isAgentTarget({ type: 'page', url: s.url }) &&
+        s.policyAck && s.policyAck.verified && s.policyAck.policyVersion === policy.policyVersion && s.policyAck.expiresAt > Date.now());
+    const stopped = [..._sessions.values()].find(s => s.policyAck?.reasonCode);
+    return { connected: isConnected(), verified: !!session, reasonCode: stopped?.policyAck?.reasonCode, ...(session ? session.policyAck : {}) };
+}
 
 // ── State ────────────────────────────────────────────────────
 let _ws = null;
+let _epoch = 0, _connectPromise = null, _stopped = false;
+const _repairs = createRecoverySupervisor();
+const _attaching = new Set();
 let _enabled = true;     // Always enabled by default
 let _port = 0;
+let _configuredPort = 0;
 let _msgId = 0;
 let _sessions = new Map();  // targetId → { sessionId, alive, lastCheck, url }
 let _heartbeat = null;
@@ -37,9 +94,11 @@ let _blockedLog = [];
 let _onBlocked = null;
 let _onClicked = null;
 let _onChatEvent = null;
+let _onJobObservation = null;
 let _totalClicks = 0;
 let _clickLog = [];
 let _lastError = '';       // last connect/WS error (for diagnostics)
+let _recoveryStartedAt = 0, _lastRecoveryMs = null;
 let _lastPhase = 'init';   // init|disabled|discoverPort|fetchVersion|connecting|open|closed|error|reconnecting
 let _debugLog = [];       // observer debug payloads (last N)
 const MAX_DEBUG_LOG = 20;
@@ -68,10 +127,14 @@ function setPhase(p) {
  * Initialize CDP module — auto-connect immediately.
  */
 function init(opts = {}) {
+    _stopped = false;
+    _getPolicy = opts.getPolicy || null;
     _onBlocked = opts.onBlocked || null;
     _onClicked = opts.onClicked || null;
     _onChatEvent = opts.onChatEvent || null;
+    _onJobObservation = opts.onJobObservation || null;
     _port = cfg('cdpPort', 0);
+    _configuredPort = _port;
     _enabled = cfg('cdpEnabled', true);
 
     // Always attempt to connect — this is the primary mechanism
@@ -94,6 +157,7 @@ function getSessionSummaries() {
             url: s.url || '',
             title: s.title || '',
             alive: !!s.alive,
+            adapterVersion: s.policyAck?.adapterVersion || null, ledger: s.policyAck?.ledger || null, scheduler: s.policyAck?.scheduler || null,
         });
     }
     return out;
@@ -108,6 +172,8 @@ function getDebugState() {
         reconnectAttempts: _reconnectAttempts,
         wsReadyState: _ws ? _ws.readyState : null,
         sessions: _sessions.size,
+        recoveryMs: _lastRecoveryMs,
+        recoveryEvidence: 'executor-policy-ack', rendererRecovery: _repairs.snapshot(),
     };
 }
 function getBlockedLog() { return _blockedLog; }
@@ -117,36 +183,38 @@ function getSessionCount() { return _sessions.size; }
 
 function setEnabled(val) {
     _enabled = val;
-    if (val) connect();
+    if (val) { _stopped = false; connect(); }
     else disconnect();
 }
 
 // ── Connection ───────────────────────────────────────────────
-async function connect() {
+function connect() {
+    if (_connectPromise) return _connectPromise;
+    _stopped = false;
+    const epoch = _epoch;
+    const pending = connectOnce(epoch);
+    _connectPromise = pending;
+    pending.finally(() => { if (_connectPromise === pending) _connectPromise = null; });
+    return pending;
+}
+
+async function connectOnce(epoch) {
     if (!_enabled) {
         _lastError = 'disabled (grav.cdpEnabled=false)';
         setPhase('disabled');
         return false;
     }
     if (_ws && _ws.readyState === 1) return true; // already connected
-    if (_ws) disconnect();
+    if (_ws) return false; // A connecting socket belongs to the single-flight attempt.
 
     setPhase('discoverPort');
     const port = _port || await discoverPort();
+    if (epoch !== _epoch || _stopped || !_enabled) return false;
     if (!port) {
         _reconnectAttempts++;
         _lastError = 'no debug port found';
         setPhase('discoverPort');
         console.log(`[Grav CDP] No debug port found (attempt ${_reconnectAttempts}) — will retry`);
-        if (_reconnectAttempts === 5) {
-            vscode.window.showWarningMessage(
-                '[Grav] CDP không kết nối được sau 5 lần thử. Hãy QUIT hoàn toàn Antigravity (Cmd+Q / Alt+F4) rồi mở lại.',
-                'OK'
-            );
-        } else if (_reconnectAttempts >= 20) {
-            // After many failures, slow down significantly
-            console.log('[Grav CDP] Too many failures — backing off');
-        }
         scheduleReconnect();
         return false;
     }
@@ -155,6 +223,7 @@ async function connect() {
     try {
         setPhase('fetchVersion');
         const info = await httpGet(`http://127.0.0.1:${port}/json/version`);
+        if (epoch !== _epoch || _stopped || !_enabled) return false;
         let parsed;
         try { parsed = JSON.parse(info); }
         catch (e) { throw new Error('Invalid /json/version JSON: ' + String(info).slice(0, 200)); }
@@ -166,31 +235,36 @@ async function connect() {
             throw new Error(`Security Alert: Non-local WebSocket connection blocked: ${wsUrl.slice(0, 80)}`);
         }
 
-        return new Promise((resolve) => {
+        return await new Promise((resolve) => {
             const WebSocket = require('ws');
             _lastError = '';
             console.log('[Grav CDP] Connecting WS:', wsUrl);
             setPhase('connecting');
-            _ws = new WebSocket(wsUrl, { handshakeTimeout: WS_TIMEOUT });
+            const socket = new WebSocket(wsUrl, { handshakeTimeout: WS_TIMEOUT });
+            _ws = socket;
+            const current = () => epoch === _epoch && _ws === socket && !_stopped;
 
             // Watchdog: sometimes sockets stay stuck in CONNECTING without error/close.
             if (_connectWatchdog) clearTimeout(_connectWatchdog);
             _connectWatchdog = setTimeout(() => {
                 try {
-                    if (_ws && _ws.readyState === 0) {
+                    if (current() && socket.readyState === 0) {
                         _lastError = 'handshake stuck (watchdog timeout)';
                         setPhase('error');
                         console.error('[Grav CDP] WS stuck in CONNECTING — forcing close');
-                        try { _ws.terminate(); } catch (_) { try { _ws.close(); } catch (_) { } }
+                        _reconnectAttempts++;
                         cleanup();
-                        if (_enabled) scheduleReconnect();
+                        try { socket.terminate(); } catch (_) { try { socket.close(); } catch (_) { } }
+                        resolve(false);
+                        if (_enabled && !_stopped) scheduleReconnect();
                     }
                 } catch (_) { }
             }, WS_TIMEOUT + 1000);
 
-            _ws.on('open', () => {
+            socket.on('open', () => {
+                if (!current()) { resolve(false); return; }
                 console.log('[Grav CDP] Connected on port', port);
-                _reconnectAttempts = 0; // Reset only on successful connection
+                // Reset backoff only after stable executor policy acknowledgments.
                 _lastError = '';
                 setPhase('open');
                 if (_connectWatchdog) clearTimeout(_connectWatchdog);
@@ -200,32 +274,41 @@ async function connect() {
                 resolve(true);
             });
 
-            _ws.on('message', (data) => {
+            socket.on('message', (data) => {
+                if (!current()) return;
                 try { handleMessage(JSON.parse(data.toString())); } catch (e) { console.error('[Grav CDP] message parse error:', e.message); }
             });
 
-            _ws.on('close', (code, reason) => {
+            socket.on('close', (code, reason) => {
+                if (!current()) { resolve(false); return; }
                 console.log(`[Grav CDP] Disconnected (code: ${code}, reason: ${reason || 'none'})`);
                 _lastError = `closed (code ${code})`;
                 setPhase('closed');
                 if (_connectWatchdog) clearTimeout(_connectWatchdog);
                 _connectWatchdog = null;
+                _reconnectAttempts++;
                 cleanup();
-                if (_enabled) scheduleReconnect();
+                if (_enabled && !_stopped) scheduleReconnect();
+                resolve(false);
             });
 
-            _ws.on('error', (err) => {
+            socket.on('error', (err) => {
+                if (!current()) { resolve(false); return; }
                 console.error('[Grav CDP] WS error:', err.message);
                 _lastError = err && err.message ? err.message : 'ws error';
                 setPhase('error');
                 if (_connectWatchdog) clearTimeout(_connectWatchdog);
                 _connectWatchdog = null;
+                _reconnectAttempts++;
                 cleanup();
-                if (_enabled) scheduleReconnect();
+                try { socket.terminate(); } catch (_) {}
+                if (_enabled && !_stopped) scheduleReconnect();
                 resolve(false);
             });
         });
     } catch (e) {
+        if (epoch !== _epoch || _stopped) return false;
+        if (!_configuredPort) _port = 0;
         console.error('[Grav CDP] Connect failed:', e.message);
         _lastError = e && e.message ? e.message : 'connect failed';
         setPhase('error');
@@ -236,12 +319,16 @@ async function connect() {
 }
 
 function disconnect() {
+    _stopped = true;
+    const socket = _ws;
     cleanup();
-    if (_ws) try { _ws.close(); } catch (_) { }
-    _ws = null;
+    if (socket) try { socket.close(); } catch (_) { }
 }
 
 function cleanup() {
+    if (_ws && !_recoveryStartedAt) _recoveryStartedAt = Date.now();
+    if (_policyTimer) clearInterval(_policyTimer);
+    _policyTimer = null;
     if (_heartbeat) clearInterval(_heartbeat);
     _heartbeat = null;
     if (_reconnectTimer) clearTimeout(_reconnectTimer);
@@ -249,8 +336,8 @@ function cleanup() {
     if (_connectWatchdog) clearTimeout(_connectWatchdog);
     _connectWatchdog = null;
     // NOTE: Do NOT reset _reconnectAttempts here — it must persist across
-    // disconnect/reconnect cycles so the warning message triggers after 5 fails.
-    // It's reset only on successful connection in connect().
+    // disconnect/reconnect cycles so retry backoff persists across failures.
+    // It resets only after stable executor policy acknowledgments.
 
     // Properly detach from all CDP sessions before clearing — prevents session leak
     // accumulation across reconnect cycles (each reconnect would orphan the old sessions
@@ -258,10 +345,15 @@ function cleanup() {
     if (_ws && _ws.readyState === 1 /* OPEN */) {
         for (const [, s] of _sessions) {
             if (s.sessionId) {
+                try { _ws.send(JSON.stringify({ id: ++_msgId, method: 'Runtime.evaluate', sessionId: s.sessionId, params: { expression: 'window.__gravObserver && window.__gravObserver.dispose()' } })); } catch (_) { }
                 try { _ws.send(JSON.stringify({ id: 0, method: 'Target.detachFromTarget', params: { sessionId: s.sessionId } })); } catch (_) { }
             }
         }
     }
+    _ws = null;
+    _epoch++;
+    _connectPromise = null;
+    _attaching.clear();
     _sessions.clear();
     _heartbeatRunning = false;
     _discoverRunning = false;
@@ -273,14 +365,15 @@ function cleanup() {
 }
 
 function scheduleReconnect() {
-    if (_reconnectTimer) return;
+    if (_stopped || !_enabled || _reconnectTimer) return;
     setPhase('reconnecting');
     // Exponential backoff: 3s, 6s, 12s, 24s... capped at 30s
-    const delay = Math.min(RECONNECT_MS * Math.pow(2, Math.min(_reconnectAttempts, 4)), 30000);
+    const base = Math.min(RECONNECT_MS * Math.pow(2, Math.min(_reconnectAttempts, 4)), 30000);
+    const delay = Math.round(base * (0.8 + Math.random() * 0.4));
     console.log(`[Grav CDP] Reconnect in ${delay}ms (attempt ${_reconnectAttempts + 1})`);
     _reconnectTimer = setTimeout(() => {
         _reconnectTimer = null;
-        if (_enabled) connect();
+        if (_enabled && !_stopped) connect();
     }, delay);
 }
 
@@ -330,7 +423,8 @@ function httpGet(url) {
 }
 
 // ── CDP Messaging ────────────────────────────────────────────
-function send(method, params = {}, sessionId = null, timeoutMs = WS_TIMEOUT) {
+function send(method, params = {}, sessionId = null, timeoutMs = WS_TIMEOUT, epoch = _epoch) {
+    if (epoch !== _epoch) return Promise.reject(new Error('stale connection'));
     if (!_ws || _ws.readyState !== 1) return Promise.reject(new Error('not connected'));
     const id = ++_msgId;
     const msg = { id, method, params };
@@ -342,7 +436,8 @@ function send(method, params = {}, sessionId = null, timeoutMs = WS_TIMEOUT) {
             reject(new Error('timeout'));
         }, timeoutMs);
         _callbacks.set(id, { resolve, reject, timer });
-        _ws.send(JSON.stringify(msg));
+        try { _ws.send(JSON.stringify(msg)); }
+        catch (error) { clearTimeout(timer); _callbacks.delete(id); reject(error); }
     });
 }
 
@@ -357,6 +452,11 @@ function handleMessage(msg) {
         return;
     }
 
+    if (msg.method === 'Target.targetDestroyed') {
+        const tid = msg.params.targetId;
+        _sessions.delete(tid); _repairs.forget(tid);
+    }
+
     // Event: new target created
     if (msg.method === 'Target.targetCreated') {
         const info = msg.params.targetInfo;
@@ -365,14 +465,6 @@ function handleMessage(msg) {
         if (_debugLog.length > MAX_DEBUG_LOG) _debugLog.pop();
         if (isAgent) {
             attachToTarget(info.targetId, info.url, info.title || '');
-        } else {
-            // Still enable auto-attach on non-agent targets to discover nested OOPIFs
-            send('Target.attachToTarget', { targetId: info.targetId, flatten: true })
-                .then(r => {
-                    if (r && r.sessionId) {
-                        enableAutoAttach(r.sessionId).catch(() => {});
-                    }
-                }).catch(() => {});
         }
     }
 
@@ -403,8 +495,7 @@ function handleMessage(msg) {
                     injectObserver(sessionId);
                 }
             } else if (sessionId) {
-                // Even for non-agent targets, enable auto-attach to discover nested webviews
-                enableAutoAttach(sessionId).catch(() => {});
+                send('Target.detachFromTarget', { sessionId }).catch(() => {});
             }
         } catch (_) { }
     }
@@ -422,6 +513,12 @@ function handleMessage(msg) {
     // Event: target info changed (URL update after navigation)
     if (msg.method === 'Target.targetInfoChanged') {
         const info = msg.params.targetInfo;
+        if (!isAgentTarget(info) && _sessions.has(info.targetId)) {
+            const session = _sessions.get(info.targetId);
+            send('Runtime.evaluate', { expression: 'window.__gravObserver && window.__gravObserver.dispose()' }, session.sessionId).catch(() => {});
+            send('Target.detachFromTarget', { sessionId: session.sessionId }).catch(() => {});
+            _sessions.delete(info.targetId);
+        }
         if (isAgentTarget(info) && !_sessions.has(info.targetId)) {
             attachToTarget(info.targetId, info.url, info.title || '');
         }
@@ -440,6 +537,7 @@ function handleMessage(msg) {
 
 // ── Console Event Handler (communication from observer) ──────
 function handleConsoleEvent(params, sessionId) {
+    if (![..._sessions.values()].some(s => s.sessionId === sessionId)) return;
     if (!params.args || !params.args.length) return;
     const text = params.args[0]?.value || '';
     if (typeof text !== 'string') return;
@@ -458,9 +556,11 @@ function handleConsoleEvent(params, sessionId) {
             .map(n => n < 10 ? '0' + n : n).join(':');
         try {
             const data = JSON.parse(payload);
+            const session = [..._sessions.values()].find(s => s.sessionId === sessionId);
+            attemptJournal.remember(session?.url, data);
             _clickLog.unshift({ time: ts, pattern: data.p || '', button: data.b || '' });
             if (_clickLog.length > 50) _clickLog.pop();
-            if (_onClicked) _onClicked(data);
+            if (_onClicked) _onClicked({ ...data, targetSessionId: sessionId });
         } catch (_) {
             _clickLog.unshift({ time: ts, pattern: payload, button: payload });
             if (_clickLog.length > 50) _clickLog.pop();
@@ -479,7 +579,7 @@ function handleConsoleEvent(params, sessionId) {
     if (type === 'BLOCKED') {
         try {
             const data = JSON.parse(payload);
-            logBlocked(data.cmd || payload, data.reason || 'blacklisted');
+            logBlocked(data.cmd || payload, data.reason || 'manual review', data);
         } catch (_) {
             logBlocked(payload, 'blacklisted');
         }
@@ -498,8 +598,21 @@ function handleConsoleEvent(params, sessionId) {
         } catch (_) { }
     }
 
-    if (type === 'CHAT' && _onChatEvent) {
-        try { _onChatEvent(JSON.parse(payload)); } catch (e) { console.error('[Grav CDP] CHAT parse error:', e.message); }
+    // JOB: verified host job lifecycle events from the injected
+    // agentStateProvider producer (streamAgentStateUpdates).
+    if (type === 'JOB') {
+        try {
+            const data = JSON.parse(payload);
+            if (_onJobObservation) _onJobObservation({ ...data, targetSessionId: sessionId, evidence: 'host-job-lifecycle' });
+        } catch (e) { console.error('[Grav CDP] JOB parse error:', e.message); }
+    }
+
+    if (type === 'CHAT') {
+        try {
+            const data = JSON.parse(payload);
+            if (_onJobObservation) _onJobObservation({ ...data, targetSessionId: sessionId, evidence: 'renderer-observation', type: 'progress' });
+            if (_onChatEvent) _onChatEvent(data);
+        } catch (e) { console.error('[Grav CDP] CHAT parse error:', e.message); }
     }
 
     // DEBUG/BOOT: capture observer introspection (labels, counts, url)
@@ -528,58 +641,10 @@ function handleConsoleEvent(params, sessionId) {
 //  2. DOM.getBoxModel to get coordinates
 //  3. Input.dispatchMouseEvent sequence: mouseMoved → mousePressed → mouseReleased
 // ══════════════════════════════════════════════════════════════
-async function cdpNativeClick(pattern, buttonText) {
-    for (const [, session] of _sessions) {
-        try {
-            // Step 1: Find the button element via DOM.querySelector
-            const { root } = await send('DOM.getDocument', { depth: 0 }, session.sessionId);
-            if (!root || !root.nodeId) continue;
-
-            // Use Runtime.evaluate to find button coordinates (more reliable than DOM.querySelector for text matching)
-            const findScript = `(function() {
-                var btns = document.querySelectorAll('button, [role="button"], a.action-label, vscode-button');
-                for (var i = 0; i < btns.length; i++) {
-                    var b = btns[i];
-                    if (b.disabled || b.offsetWidth === 0) continue;
-                    var text = (b.innerText || b.textContent || '').trim().split('\\n')[0].trim();
-                    if (text === ${JSON.stringify(buttonText)}) {
-                        var rect = b.getBoundingClientRect();
-                        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, w: rect.width, h: rect.height };
-                    }
-                }
-                return null;
-            })()`;
-
-            const result = await send('Runtime.evaluate', {
-                expression: findScript,
-                returnByValue: true,
-            }, session.sessionId);
-
-            const coords = result?.result?.value;
-            if (!coords || !coords.x || !coords.y) continue;
-
-            // Step 2: Send trusted mouse events via CDP Input domain
-            await send('Input.dispatchMouseEvent', {
-                type: 'mouseMoved', x: coords.x, y: coords.y,
-            }, session.sessionId);
-
-            await send('Input.dispatchMouseEvent', {
-                type: 'mousePressed', x: coords.x, y: coords.y,
-                button: 'left', clickCount: 1,
-            }, session.sessionId);
-
-            await send('Input.dispatchMouseEvent', {
-                type: 'mouseReleased', x: coords.x, y: coords.y,
-                button: 'left', clickCount: 1,
-            }, session.sessionId);
-
-            _totalClicks++;
-            console.log('[Grav CDP] Native click:', pattern, buttonText);
-            return; // Success — stop trying other sessions
-        } catch (e) {
-            console.error('[Grav CDP] Native click failed:', e.message);
-        }
-    }
+async function cdpNativeClick() {
+    // An unchanged label is not evidence that activation failed. Never replay approvals
+    // from renderer console messages (which are untrusted input).
+    return false;
 }
 
 // ── Target Discovery & Attachment ────────────────────────────
@@ -601,135 +666,28 @@ async function cdpNativeClick(pattern, buttonText) {
  * panels — clicking buttons there would change user preferences.
  */
 function isAgentTarget(info) {
-    if (!info) return false;
-    const urlRaw = info.url || '';
-    const url = urlRaw.toLowerCase();
-    const title = (info.title || '').toLowerCase();
-    const type = info.type;
-
-    // Only accept page, iframe, webview, other — Antigravity uses various types
-    if (type !== 'page' && type !== 'iframe' && type !== 'other'
-        && type !== 'webview') return false;
-
-    // ── Antigravity workbench page (main frame) ──
-    // Agent buttons live in the main workbench — this is where Accept All, Run, etc. appear.
-    // The main workbench MUST ALWAYS BE ACCEPTED. Because the title dynamically changes based
-    // on the active file (e.g., "settings.json - workspace"), we MUST check the URL before
-    // applying the strict title blocklist, otherwise the workbench gets blocked when certain files are open!
-    if (url.includes('antigravity') && url.includes('workbench')) return true;
-    if (url.includes('windsurf') && url.includes('workbench')) return true;
-    if (url.includes('workbench.html')) return true;
-    // Windsurf main window — type=page with no specific workbench keyword
-    if (type === 'page' && !url.startsWith('http') && !url.startsWith('chrome') && !url.startsWith('devtools') && !url.startsWith('vscode-webview://')) return true;
-
-    // ══════════════════════════════════════════════════════════
-    //  HARD BLOCK LIST — NEVER inject into these targets
-    //  These are non-agent panels where clicking would be destructive
-    // ══════════════════════════════════════════════════════════
-    const BLOCK_URLS = [
-        // Grav dashboard (MUST SKIP — otherwise auto-clicks its own buttons!)
-        'gravdashboard', 'grav-dashboard',
-        // Settings panels (all variants)
-        'settings', 'preferences', 'preference',
-        // Browser / Simple Browser panel
-        'simple-browser', 'simplebrowser', 'browser-preview',
-        // Extensions panel
-        'extensions', 'marketplace', 'extension-editor',
-        // Welcome / Walkthrough
-        'welcome', 'walkthrough', 'getting-started',
-        // Release notes
-        'release-notes', 'releasenotes', 'changelog',
-        // Output / Terminal webviews
-        'output', 'terminal',
-        // Markdown preview
-        'markdown', 'preview',
-        // Keybindings editor
-        'keybinding', 'keyboard-shortcuts',
-        // Accounts / Auth
-        'accounts', 'authentication',
-        // Diff editor webview
-        'diff-editor', 'merge-editor',
-        // Notebook
-        'notebook', 'jupyter',
-        // Webview developer tools
-        'devtools', 'developer-tools',
-    ];
-
-    // Block by title too (some OOPIF targets have empty URL)
-    for (const blocked of BLOCK_URLS) {
-        if (title.includes(blocked)) return false;
+    if (!info || !['page', 'iframe', 'webview', 'other'].includes(info.type)) return false;
+    let url;
+    try { url = new URL(info.url); } catch (_) { return false; }
+    if (url.protocol === 'file:' || url.protocol === 'vscode-file:') {
+        const path = require('path');
+        const { fileURLToPath } = require('url');
+        if (url.protocol === 'vscode-file:' && url.hostname !== 'vscode-app') return false;
+        try {
+            const physical = fileURLToPath(url.protocol === 'file:' ? url : new URL('file://' + url.pathname));
+            if (!isWithinRoot(physical, vscode.env.appRoot)) return false;
+            const relative = path.relative(path.resolve(vscode.env.appRoot), physical).split(path.sep).join('/');
+            return /^out\/vs\/(?:code\/(?:electron-sandbox|electron-browser|browser|electron-main)\/)?workbench\/workbench\.html$/.test(relative);
+        } catch (_) { return false; }
     }
-
-    // ── vscode webview targets (supporting various schemes in Antigravity 2.0) ──
-    const isVscodeScheme = url.startsWith('vscode-webview://') || url.startsWith('vscode-file://') || url.startsWith('vscode-resource://') || url.startsWith('vscode-co-host://');
-    if (isVscodeScheme || url.includes('webview') || url.includes('co-host')) {
-        for (const blocked of BLOCK_URLS) {
-            if (url.includes(blocked) || title.includes(blocked)) return false;
-        }
-
-        if (type === 'iframe' || type === 'webview' || type === 'other') return true;
-
-        const POSITIVE_WEBVIEW_HINTS = [
-            'antigravity', 'windsurf', 'codeium', 'agent', 'chat',
-            'cascade', 'cortex', 'assistant', 'copilot', 'tool',
-            'grav', 'launchpad',
-            'desktop-agent', 'orchestrator', 'scheduler' // Standalone UI indicators
-        ];
-        if (POSITIVE_WEBVIEW_HINTS.some((hint) => url.includes(hint) || title.includes(hint))) {
-            return true;
-        }
-
-        // Non-iframe vscode webviews still need a positive hint.
-        return false;
-    }
-
-    // ── OOPIF/webview targets with empty/blank URL ──
-    // Some Antigravity versions report agent iframes with url "" / about:blank.
-    // In that case, fall back to target title heuristics.
-    if (!url || url === 'about:blank') {
-        const POSITIVE_TITLES = [
-            'agent', 'chat', 'cascade', 'cortex', 'assistant', 'claude', 'copilot',
-            'tool', 'approval', 'approve', 'accept', 'grav', 'launchpad',
-        ];
-        for (const w of POSITIVE_TITLES) {
-            if (title.includes(w)) return true;
-        }
-        return false;
-    }
-
-    // ── Antigravity-specific internal URLs ──
-    if (url.includes('antigravity') && url.includes('agent')) return true;
-    if (url.includes('antigravity') && url.includes('chat')) return true;
-    if (url.includes('antigravity') && url.includes('cascade')) return true;
-    if (url.includes('antigravity') && url.includes('cortex')) return true;
-
-    // ── Windsurf legacy URLs (Antigravity was forked from Windsurf) ──
-    if (url.includes('windsurf') && url.includes('agent')) return true;
-    if (url.includes('windsurf') && url.includes('chat')) return true;
-    if (url.includes('windsurf') && url.includes('cascade')) return true;
-    if (url.includes('windsurf') && url.includes('cortex')) return true;
-    if (url.includes('codeium') && url.includes('agent')) return true;
-    if (url.includes('codeium') && url.includes('chat')) return true;
-    if (url.includes('codeium') && url.includes('copilot')) return true;
-
-    // ── SKIP: everything else ──
-    if (url.startsWith('chrome-extension://')) return false;
-    if (url.startsWith('devtools://')) return false;
-    if (url.startsWith('http://')) return false;
-    if (url.startsWith('https://')) return false;
-    // url blank handled above
-
-    // Unknown iframes/webviews are too broad to trust without positive hints.
-    if (type === 'iframe' || type === 'webview') return false;
-
-    // Default for others: check blocklist
-    for (const blocked of BLOCK_URLS) {
-        if (url.includes(blocked)) return false;
-    }
-    return true;
+    if (url.protocol !== 'vscode-webview:') return false;
+    let identity;
+    try { identity = decodeURIComponent(url.pathname).toLowerCase(); } catch (_) { return false; }
+    if (/(?:^|\/)grav(?:[-/]|$)|browser|preview|settings|marketplace|extension/.test(identity)) return false;
+    return /(?:^|[/])(?:antigravity-agent|windsurf-agent|codeium-chat|cascade|cortex)(?:[/]|$)/.test(identity);
 }
 
-async function enableAutoAttach(sessionId = null) {
+async function enableAutoAttach(sessionId = null, epoch = _epoch) {
     try {
         await send('Target.setAutoAttach', {
             autoAttach: true,
@@ -741,14 +699,15 @@ async function enableAutoAttach(sessionId = null) {
                 { type: 'webview', exclude: false },
                 { type: 'other', exclude: false }
             ]
-        }, sessionId);
+        }, sessionId, WS_TIMEOUT, epoch);
     } catch (_) {
+        if (epoch !== _epoch) return;
         try {
             await send('Target.setAutoAttach', {
                 autoAttach: true,
                 waitForDebuggerOnStart: false,
                 flatten: true
-            }, sessionId);
+            }, sessionId, WS_TIMEOUT, epoch);
         } catch (_) { }
     }
 }
@@ -756,6 +715,8 @@ async function enableAutoAttach(sessionId = null) {
 async function discoverTargets() {
     if (_discoverRunning) return;
     _discoverRunning = true;
+    const epoch = _epoch;
+    const command = (method, params = {}, sid = null) => send(method, params, sid, WS_TIMEOUT, epoch);
     try {
         // ══════════════════════════════════════════════════════════
         //  CRITICAL: Enable auto-attach BEFORE discovering targets
@@ -769,9 +730,11 @@ async function discoverTargets() {
         //  4. Attach to main pages first (they contain nested webviews)
         // ══════════════════════════════════════════════════════════
         // Enable auto-attach with flatten=true for OOPIF support
-        await enableAutoAttach();
-        await send('Target.setDiscoverTargets', { discover: true });
-        const { targetInfos } = await send('Target.getTargets');
+        await enableAutoAttach(null, epoch);
+        if (epoch !== _epoch) return;
+        await command('Target.setDiscoverTargets', { discover: true });
+        const { targetInfos } = await command('Target.getTargets');
+        if (epoch !== _epoch) return;
         _lastTargets = (targetInfos || []).map(t => ({
             type: t.type, title: t.title || '', url: t.url || '', targetId: t.targetId,
         })).slice(0, 200);
@@ -794,43 +757,34 @@ async function discoverTargets() {
         }
 
         for (const info of targetInfos) {
+            if (epoch !== _epoch) return;
             const match = isAgentTarget(info);
             if (match && !_sessions.has(info.targetId)) {
                 console.log('[Grav CDP] Attaching:', info.type, '|', (info.title || '').substring(0, 60), '|', (info.url || '').substring(0, 100));
                 await attachToTarget(info.targetId, info.url, info.title || '');
             }
         }
-        
-        // ══════════════════════════════════════════════════════════
-        //  SECOND PASS: Force attach to ALL page targets
-        //  This ensures we discover nested webviews inside main pages.
-        //  Antigravity's agent panel is a webview inside the main workbench.
-        // ══════════════════════════════════════════════════════════
-        for (const info of targetInfos) {
-            if (info.type === 'page' && !_sessions.has(info.targetId)) {
-                try {
-                    const { sessionId } = await send('Target.attachToTarget', {
-                        targetId: info.targetId, flatten: true,
-                    });
-                    // Enable auto-attach on this page to discover nested webviews
-                    await enableAutoAttach(sessionId);
-                    console.log('[Grav CDP] Force-attached to page for nested discovery:', info.targetId);
-                } catch (_) { }
-            }
-        }
     } catch (e) {
         console.error('[Grav CDP] Target discovery failed:', e.message);
     } finally {
-        _discoverRunning = false;
+        if (epoch === _epoch) _discoverRunning = false;
     }
 }
 
 async function attachToTarget(targetId, url, title = '') {
-    if (_sessions.has(targetId)) return;
+    if (_sessions.has(targetId) || _attaching.has(targetId)) return;
+    const epoch = _epoch;
+    const command = (method, params = {}, sid = null) => send(method, params, sid, WS_TIMEOUT, epoch);
+    _attaching.add(targetId);
     try {
-        const { sessionId } = await send('Target.attachToTarget', {
+        const { sessionId } = await command('Target.attachToTarget', {
             targetId, flatten: true,
         });
+        if (epoch !== _epoch) return;
+        if (_sessions.has(targetId)) {
+            if (_sessions.get(targetId).sessionId !== sessionId) await command('Target.detachFromTarget', { sessionId });
+            return;
+        }
         _sessions.set(targetId, {
             sessionId, alive: true,
             lastCheck: Date.now(), url: url || '', title: title || '',
@@ -839,49 +793,47 @@ async function attachToTarget(targetId, url, title = '') {
 
         // CRITICAL: Enable auto-attach recursively on THIS session
         // This allows OOPIF/webview frames nested inside this target to be discovered
-        await enableAutoAttach(sessionId);
+        await enableAutoAttach(sessionId, epoch);
 
         // Enable Runtime + Console + DOM + Input for this session
-        await send('Runtime.enable', {}, sessionId);
+        await command('Runtime.enable', {}, sessionId);
         // Sanity ping: verify console events flow back to extension host
         try {
-            await send('Runtime.evaluate', {
+            await command('Runtime.evaluate', {
                 expression: `console.log('[GRAV:DEBUG] ' + JSON.stringify({ ping: 1, ts: Date.now(), url: location && location.href ? String(location.href).slice(0,120) : '' }))`,
             }, sessionId);
         } catch (_) { }
         // DOM + Input needed for CDP native click fallback
-        try { await send('DOM.enable', {}, sessionId); } catch (_) { }
-        try { await send('Input.enable', {}, sessionId); } catch (_) { }
+        try { await command('DOM.enable', {}, sessionId); } catch (_) { }
+        try { await command('Input.enable', {}, sessionId); } catch (_) { }
 
         // Inject the observer
         await injectObserver(sessionId);
     } catch (e) {
         console.error('[Grav CDP] Attach failed:', e.message);
-    }
+    } finally { if (epoch === _epoch) _attaching.delete(targetId); }
 }
 
 // ── Observer Injection ───────────────────────────────────────
 async function injectObserver(sessionId) {
-    const presetMode = cfg('presetMode', '1.19.6');
-    const patterns = presetMode === 'custom' ? cfg('approvePatterns', DEFAULT_PATTERNS) : (PRESET_PATTERNS[presetMode] || DEFAULT_PATTERNS);
-    const userBlacklist = cfg('terminalBlacklist', []);
-    const allBlacklist = [...DEFAULT_BLACKLIST, ...userBlacklist];
-    const scrollEnabled = cfg('autoScroll', true);
-    const scrollPauseMs = cfg('scrollPauseMs', 7000);
-    const dryRun = cfg('dryRun', false);
-    const skipBrowserAgent = cfg('skipBrowserAgent', false);
-
-    const script = buildObserverScript(patterns, allBlacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent);
+    const session = [..._sessions.values()].find(s => s.sessionId === sessionId);
+    if (!session || session.injecting) return;
+    const epoch = _epoch;
+    session.injecting = true;
+    const policy = getPolicy();
+    const script = attemptJournal.seedScript(session.url) + buildObserverScript(policy.patterns, policy.blacklist, policy.scrollEnabled,
+        policy.scrollPauseMs, policy.dryRun, policy.skipBrowserAgent, attemptJournal.isSaturated() ? { ...policy, enabled: false } : policy);
 
     try {
         await send('Runtime.evaluate', {
             expression: script,
             awaitPromise: false,
             returnByValue: false,
-        }, sessionId);
+        }, sessionId, WS_TIMEOUT, epoch);
+        if (epoch === _epoch && [..._sessions.values()].includes(session)) await updatePolicy();
     } catch (e) {
         console.error('[Grav CDP] Observer inject failed:', e.message);
-    }
+    } finally { session.injecting = false; }
 }
 
 /**
@@ -985,6 +937,10 @@ let _lastFullDiscovery = 0;
 const FULL_DISCOVERY_INTERVAL = 15000; // Full re-discovery every 15s
 
 function startHeartbeat() {
+    if (_policyTimer) clearInterval(_policyTimer);
+    _policyTimer = setInterval(() => {
+        updatePolicy().catch(() => {});
+    }, 500);
     if (_heartbeat) clearInterval(_heartbeat);
     _heartbeat = setInterval(async () => {
         // Prevent overlapping ticks — if the previous tick is still running, skip this one.
@@ -993,35 +949,46 @@ function startHeartbeat() {
         if (_heartbeatRunning) return;
         if (!_ws || _ws.readyState !== 1) return;
         _heartbeatRunning = true;
+        const epoch = _epoch;
         try {
             // Check each attached session
-            for (const [targetId, session] of _sessions) {
+            await runTargets([..._sessions], async ([targetId, session]) => {
+                if (epoch !== _epoch || _sessions.get(targetId) !== session) return;
                 try {
                     // Use short timeout for ping — if observer is alive it responds instantly.
                     // Fast failure prevents blocking the entire heartbeat tick.
                     const result = await send('Runtime.evaluate', {
                         expression: 'window.__grav3',
                         returnByValue: true,
-                    }, session.sessionId, HEARTBEAT_PING_MS);
+                    }, session.sessionId, HEARTBEAT_PING_MS, epoch);
 
+                    if (epoch !== _epoch || _sessions.get(targetId) !== session) return;
                     if (!result || !result.result || typeof result.result.value !== 'string' || !result.result.value.startsWith('v')) {
                         // Observer died or was never injected — re-inject
-                        console.log('[Grav CDP] Re-injecting observer for', targetId);
-                        await injectObserver(session.sessionId);
-                    }
+                        await _repairs.repair(targetId, () => {
+                            console.log('[Grav CDP] Re-injecting observer for', targetId);
+                            return injectObserver(session.sessionId);
+                        });
+                    } else if (session.policyAck?.verified && session.policyAck.expiresAt > Date.now()) {
+                        _repairs.healthy(targetId);
+                    } else { _repairs.unhealthy(targetId); }
+                    if (epoch !== _epoch || _sessions.get(targetId) !== session) return;
                     session.alive = true;
                     session.lastCheck = Date.now();
                 } catch (e) {
+                    if (epoch !== _epoch || _sessions.get(targetId) !== session) return;
+                    _repairs.unhealthy(targetId);
                     session.alive = false;
                     if (Date.now() - session.lastCheck > DEAD_AFTER_MS) {
                         _sessions.delete(targetId);
                         console.log('[Grav CDP] Pruned dead session:', targetId);
                     }
                 }
-            }
+            });
 
             // Re-discover targets (new webviews may have appeared)
             // Do full discovery less frequently to avoid overwhelming CDP
+            if (epoch !== _epoch) return;
             const now = Date.now();
             if (now - _lastFullDiscovery > FULL_DISCOVERY_INTERVAL || _sessions.size === 0) {
                 _lastFullDiscovery = now;
@@ -1033,23 +1000,26 @@ function startHeartbeat() {
                 console.log('[Grav CDP] WARNING: No active sessions. Targets:', _lastTargets.length);
             }
         } finally {
-            _heartbeatRunning = false;
+            if (epoch === _epoch) _heartbeatRunning = false;
         }
     }, HEARTBEAT_MS);
 }
 
 // ── Hot-Update Observer Config ───────────────────────────────
 async function hotUpdate() {
-    for (const [, session] of _sessions) {
-        try {
-            // Reset the flag so observer re-injects with new config
-            await send('Runtime.evaluate', {
-                expression: 'window.__grav3 = false',
-                returnByValue: true,
-            }, session.sessionId);
-            await injectObserver(session.sessionId);
-        } catch (_) { }
+    const enabled = cfg('cdpEnabled', true);
+    const port = cfg('cdpPort', 0);
+    const reconnect = enabled !== _enabled || port !== _configuredPort;
+    _enabled = enabled;
+    _configuredPort = port;
+    if (reconnect) {
+        disconnect();
+        _port = port;
+        if (_enabled) await connect();
+        return;
     }
+    await updatePolicy();
+    for (const session of _sessions.values()) await injectObserver(session.sessionId);
 }
 
 // ── Force Reconnect (for manual recovery) ────────────────────
@@ -1058,28 +1028,29 @@ async function forceReconnect() {
     _port = 0; // Reset port to re-discover
     _reconnectAttempts = 0;
     disconnect();
-    await new Promise(r => setTimeout(r, 500));
     return connect();
 }
 
 // ── Blocked Command Logging ──────────────────────────────────
-function logBlocked(cmd, reason) {
+function logBlocked(cmd, reason, metadata = {}) {
     const ts = new Date().toISOString().slice(11, 19);
     _blockedLog.unshift({ time: ts, cmd: cmd.slice(0, 200), reason });
     if (_blockedLog.length > MAX_BLOCKED) _blockedLog.pop();
-    if (_onBlocked) _onBlocked(cmd, reason);
+    if (_onBlocked) _onBlocked(cmd, reason, metadata);
 }
+
+function resetStats() { _totalClicks = 0; _clickLog = []; _blockedLog = []; }
 
 module.exports = {
     init, connect, disconnect, forceReconnect,
     isEnabled, isConnected, setEnabled,
     getBlockedLog, getTotalClicks, getClickLog, getSessionCount,
-    getLastError, getPhase, getReconnectAttempts,
+    getLastError, getPhase, getReconnectAttempts, getRuntimeState,
     getDebugState,
     getDebugLog,
     getLastTargets,
     getSessionSummaries,
     probeAcceptLike,
     isAgentTarget,
-    hotUpdate, cdpNativeClick,
+    hotUpdate, updatePolicy, cdpNativeClick, resetStats,
 };

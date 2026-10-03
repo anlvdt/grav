@@ -4,25 +4,88 @@
 // ═══════════════════════════════════════════════════════════════
 'use strict';
 
+const { browserSource } = require('./action-policy');
+const { browserSource: jobProducerSource } = require('./job-producer');
+
 const {
     HIGH_CONF, COOLDOWN, REJECT_WORDS, EDITOR_SKIP, SUPPRESS_KEYWORDS, LIMITS,
 } = require('./constants');
 
-function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent) {
+function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent, policy = {}) {
     // Version tag - increment this when observer logic changes
-    const OBSERVER_VERSION = 'v4.0.18';
+    const OBSERVER_VERSION = 'v4.0.23-autopilot';
+    const config = { enabled: true, paused: false, patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent, ...policy };
     return `(function() {
     'use strict';
-    // Version-based guard: allows new observer to replace old one
-    if (window.__grav3 === '${OBSERVER_VERSION}') return;
-    window.__grav3 = '${OBSERVER_VERSION}';
-
+    var initialConfig = ${JSON.stringify(config)};
+    if (window.__gravObserver && window.__gravObserver.version === '${OBSERVER_VERSION}') {
+        window.__gravObserver.updateConfig(initialConfig);
+        return;
+    }
+    if (window.__gravObserver) window.__gravObserver.dispose();
+    var disposed = false, timers = new Set(), observers = [], listeners = [];
+    var nativeTimeout = window.setTimeout.bind(window), nativeInterval = window.setInterval.bind(window);
+    function setTimeout(fn, ms) {
+        var id = nativeTimeout(function() { timers.delete(id); if (!disposed) fn(); }, ms);
+        timers.add(id); return id;
+    }
+    function setInterval(fn, ms) {
+        var id = nativeInterval(function() { if (!disposed) fn(); }, ms);
+        timers.add(id); return id;
+    }
+    function observe() {
+        var observer = new window.MutationObserver(function(m) { if (!disposed) onMutation(m); });
+        observers.push(observer); return observer;
+    }
+    var Policy = ${browserSource};
+    var CreateJobProducer = ${jobProducerSource};
+    window.__gravPolicy = Policy;
+    var coordinator = Policy.createCoordinator(window, "cdp-dom");
+    var scheduler = Policy.createEventScheduler(safeScanner, { setTimeout: setTimeout, clearTimeout: window.clearTimeout.bind(window), delay: 50 });
+    var current = initialConfig, policyExpiresAt = 0;
     var PATTERNS = ${JSON.stringify(patterns)};
     var BLACKLIST = ${JSON.stringify(blacklist)};
     var SCROLL_ON = ${scrollEnabled};
     var SCROLL_PAUSE = ${scrollPauseMs};
     var DRY_RUN = ${dryRun ? 'true' : 'false'};
     var SKIP_BROWSER_AGENT = ${skipBrowserAgent ? 'true' : 'false'};
+    var APPROVE_MS = Policy.milliseconds(current.approveMs, 1000);
+    var SCROLL_MS = Policy.milliseconds(current.scrollMs, 800);
+    var lastUserScroll = 0, scrollTick;
+    function canAct() { return !disposed && coordinator.snapshot().currentOwner && !coordinator.snapshot().reasonCode && typeof current.policyVersion === 'string' && Date.now() < policyExpiresAt && Policy.canAct(current); }
+    function updateConfig(next) {
+        if (current.policyVersion !== next.policyVersion || next.paused || next.dryRun || !next.enabled) { coordinator.cancelPending(); scheduler.cancel(); }
+        current = Object.assign({}, next);
+        coordinator.resume(next.resumeToken);
+        if (!next.paused && next.enabled) scheduler.resume();
+        policyExpiresAt = typeof current.policyVersion === 'string' && typeof current.paused === 'boolean' && typeof current.dryRun === 'boolean' ? Date.now() + 2000 : 0;
+        PATTERNS = Policy.resolvePatterns(current);
+        BLACKLIST = current.blacklist;
+        SCROLL_ON = current.scrollEnabled === true;
+        SCROLL_PAUSE = Number.isFinite(current.scrollPauseMs) && current.scrollPauseMs >= 0 ? current.scrollPauseMs : 7000;
+        DRY_RUN = current.dryRun === true;
+        SKIP_BROWSER_AGENT = current.skipBrowserAgent === true;
+        var nextApprove = Policy.milliseconds(current.approveMs, 1000);
+        var nextScroll = Policy.milliseconds(current.scrollMs, 800);
+        if (nextApprove !== APPROVE_MS && _scanTimer) { window.clearTimeout(_scanTimer); timers.delete(_scanTimer); _scanTimer = null; }
+        if (nextApprove !== APPROVE_MS && pollTimer) { window.clearInterval(pollTimer); timers.delete(pollTimer); pollTimer = setInterval(safeScanner, nextApprove * (current.eventScheduler ? 4 : 1)); }
+        if (nextScroll !== SCROLL_MS && scrollTimer) { window.clearInterval(scrollTimer); timers.delete(scrollTimer); scrollTimer = setInterval(scrollTick, nextScroll); }
+        APPROVE_MS = nextApprove; SCROLL_MS = nextScroll;
+        var health = coordinator.snapshot();
+        return { adapterVersion: 'adapter-v1', scheduler: scheduler.snapshot(), ledger: health, reasonCode: health.reasonCode, verified: health.currentOwner && !health.reasonCode && !disposed && policyExpiresAt > Date.now() && !!current.policyVersion && !/grav.*dashboard/i.test(document.title || '') && /(?:vscode-webview:|vscode-file:)/.test(location.href), policyVersion: current.policyVersion, expiresAt: policyExpiresAt };
+    }
+    window.__gravObserver = { version: '${OBSERVER_VERSION}', updateConfig: updateConfig, dispose: function() {
+        disposed = true; coordinator.cancelPending(); scheduler.cancel();
+        try { jobProducer.dispose(); } catch(_) {}
+        timers.forEach(function(id) { window.clearTimeout(id); window.clearInterval(id); }); timers.clear();
+        observers.forEach(function(observer) { observer.disconnect(); });
+        listeners.forEach(function(l) { window.removeEventListener(l[0], l[1], l[2]); });
+        if (Element.prototype.attachShadow === wrappedAttachShadow) Element.prototype.attachShadow = _origAttachShadow;
+        if (window.__gravObserver && window.__gravObserver.dispose === this.dispose) { delete window.__gravObserver; window.__grav3 = false; }
+    } };
+    window.__grav3 = '${OBSERVER_VERSION}';
+    updateConfig(initialConfig);
+
     var _clickId = 0;
 
     // ── Shared Constants (from constants.js) ────────────────
@@ -145,43 +208,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     }
 
     // ── Safety Guard ────────────────────────────────────────
-    function extractCmd(btn) {
-        var p = btn.parentElement;
-        for (var lv = 0; lv < 8 && p; lv++) {
-            var els = p.querySelectorAll('code, pre, [class*=terminal], [class*=command], [class*=shell], [class*=code-block], [class*=codeBlock]');
-            for (var i = els.length - 1; i >= 0; i--) {
-                var txt = (els[i].textContent || '').trim();
-                if (txt.length >= 2 && txt.length <= 2000) return txt;
-            }
-            p = p.parentElement;
-        }
-        return '';
-    }
-
-    function isBlocked(cmd) {
-        if (!cmd) return null;
-        var lower = cmd.toLowerCase().trim();
-        for (var i = 0; i < BLACKLIST.length; i++) {
-            var p = BLACKLIST[i].toLowerCase().trim();
-            if (!p) continue;
-            var isMulti = p.indexOf(' ') !== -1 || p.indexOf('|') !== -1;
-            if (isMulti) {
-                // Multi-word: check if command starts with pattern or contains it after sudo/separator
-                if (lower.indexOf(p) === 0) return BLACKLIST[i];
-                if (lower.indexOf('sudo ' + p) !== -1) return BLACKLIST[i];
-                if (lower.indexOf('nohup ' + p) !== -1) return BLACKLIST[i];
-                // Check after ; or && or ||
-                var seps = lower.split(/[;&|]+/);
-                for (var j = 0; j < seps.length; j++) {
-                    var seg = seps[j].replace(/^\\s*(sudo|nohup|env)\\s+/g, '').trim();
-                    if (seg.indexOf(p) === 0) return BLACKLIST[i];
-                }
-            }
-            // Single-word patterns: skip in observer Safety Guard
-            // Only multi-word destructive patterns should block Run button
-        }
-        return null;
-    }
+    function extractCmd(btn) { return Policy.extractCommand(btn); }
 
     // ── Reject Sibling Detection ────────────────────────────
     function hasRejectNearby(btn) {
@@ -304,8 +331,6 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     //  (new DOM node = same button but WeakSet doesn't know)
     //  Fix: Use data-attribute stamping + text-based dedup
     // ══════════════════════════════════════════════════════════
-    var _clicked = new WeakSet();
-    var _clickedIds = {};  // text+position dedup map
     var _expandedOnce = new WeakSet();
     var _globalCooldown = 0;  // Global cooldown after ANY click (prevent rapid fire)
     var _runCooldown = 0;     // Extra cooldown for Run buttons (terminal needs more time)
@@ -319,52 +344,17 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     }
 
     function isAlreadyClicked(btn, text) {
-        // Layer 1: WeakSet (same DOM node)
-        if (_clicked.has(btn)) return true;
-        
-        // Layer 1.5: Shared DOM attribute to prevent double-clicks between runtime.js and cdp-observer.js
-        if (btn.hasAttribute('data-grav-clicked')) return true;
-        
-        // Layer 2: Global cooldown - minimum time between ANY clicks
         if (Date.now() < _globalCooldown) return true;
-        
-        // Layer 3: text+position dedup with pattern-specific timeout
-        var timeout = getCooldown(text);
-        var key = text + '|' + (btn.getBoundingClientRect().top | 0);
-        if (_clickedIds[key] && Date.now() - _clickedIds[key] < timeout) return true;
-        
-        // Layer 4: Same pattern cooldown (even at different positions)
-        var patternKey = 'pattern:' + text;
-        if (_clickedIds[patternKey] && Date.now() - _clickedIds[patternKey] < timeout) return true;
-        
-        return false;
+        var intent = Policy.actionIdentity(coordinator, btn, text, current);
+        return btn.getAttribute('data-grav-clicked') === 'true' || btn.getAttribute('data-grav-clicked') === intent.key;
+
     }
 
     function markClicked(btn, text) {
-        _clicked.add(btn);
-        try { btn.setAttribute('data-grav-clicked', 'true'); } catch(_) {}
-        var now = Date.now();
-        
-        // Position-based tracking
-        var key = text + '|' + (btn.getBoundingClientRect().top | 0);
-        _clickedIds[key] = now;
-        
-        // Pattern-based tracking — but NOT for Expand (it reveals new buttons that need clicking)
-        if (text !== 'Expand') {
-            var patternKey = 'pattern:' + text;
-            _clickedIds[patternKey] = now;
-        }
-        
-        // Set global cooldown — shorter for Expand (200ms) so revealed buttons get clicked fast
-        _globalCooldown = now + (text === 'Expand' ? 200 : COOLDOWN.GLOBAL);
-        
-        // Extra cooldown for Run buttons
-        if (text === 'Run' || text.indexOf('Run ') === 0) {
-            _runCooldown = now + COOLDOWN['Run'];
-        }
-        
-        _lastClickedPattern = text;
-        
+        var intent = Policy.actionIdentity(coordinator, btn, text, current);
+        try { btn.setAttribute('data-grav-clicked', intent.key); } catch(_) {}
+        _globalCooldown = Date.now() + (text === 'Expand' ? 200 : COOLDOWN.GLOBAL);
+
         ++_clickId;
     }
 
@@ -457,40 +447,38 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     //  Layer 4: Verify + retry after 200ms
     // ══════════════════════════════════════════════════════════
     function executeClick(btn, matched, text) {
-        report('CLICK', { p: matched, b: text });
-
-        // Layer 1: Normal DOM click
-        try { btn.click(); } catch(_) {}
-
-        // Layer 2: Synthetic Pointer Events (React-friendly)
-        try {
-            var r = btn.getBoundingClientRect();
-            var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-            var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, pointerId: 1, pointerType: 'mouse' };
-            btn.dispatchEvent(new PointerEvent('pointerdown', opts));
-            btn.dispatchEvent(new MouseEvent('mousedown', opts));
-            btn.dispatchEvent(new PointerEvent('pointerup', opts));
-            btn.dispatchEvent(new MouseEvent('mouseup', opts));
-            btn.dispatchEvent(new MouseEvent('click', opts));
-        } catch(_) {}
-
-        // Expand special handling
-        if (matched === 'Expand') {
-            setTimeout(function() { try { scanAndClick(); } catch(_) {} }, 400);
-            setTimeout(function() { try { scanAndClick(); } catch(_) {} }, 800);
+        if (!canAct() || inEditorContext(btn) || btn.disabled || btn.isConnected === false || !(findMatch(labelOf(btn)) || Policy.interactionPattern(btn, current))) return;
+        var cmd = Policy.readsCommand(matched) ? extractCmd(btn) : '';
+        var ctx = Policy.actionContext(btn, current);
+        var decision = Policy.evaluateAction(matched, cmd, ctx);
+        if (!decision.allowed) { report('BLOCKED', Object.assign({ outcome: 'unknown' }, decision)); return; }
+        // Scope selection is UI state, not actuation — no ledger claim. React
+        // re-renders the checked option; the next scan re-evaluates and submits.
+        if (decision.switchScope) {
+            if (!Policy.interaction.selectScope(ctx.interaction, decision.switchScope)) { report('BLOCKED', Object.assign({ outcome: 'unknown' }, decision, { reasonCode: 'scope-select-failed' })); return; }
+            report('CLICK', Object.assign({ p: matched, b: text, scopeSwitch: decision.switchScope, outcome: 'scope-selected' }, decision));
+            return;
         }
-
-        // Layer 3: Native CDP click (Fallback if button still there)
-        setTimeout(function() {
-            try {
-                if (btn.isConnected && btn.offsetWidth > 0 && !btn.disabled) {
-                    var stillText = labelOf(btn);
-                    if (stillText === text) {
-                        report('RETRY', { p: matched, b: text });
-                    }
-                }
-            } catch(_) {}
-        }, 200);
+        var intent = Policy.actionIdentity(coordinator, btn, text, current), claim = coordinator.claim(intent, current.policyVersion);
+        if (!claim.ok) { report('BLOCKED', { decision: 'manual', reasonCode: claim.reasonCode, reason: 'Intent needs manual review.', outcome: 'unknown' }); return; }
+        if (!canAct() || !Policy.evaluateAction(matched, Policy.readsCommand(matched) ? extractCmd(btn) : '', Policy.actionContext(btn, current)).allowed || !coordinator.valid(claim.entry, Policy.actionIdentity(coordinator, btn, labelOf(btn), current), current.policyVersion)) return;
+        // Question answers need a claim (they actuate) but never click submit
+        // directly: single-select auto-advances via the host onNextNoWrap timer
+        // (~200ms); multi-select needs an explicit Continue click after state
+        // settles.
+        if (decision.optionIds) {
+            coordinator.attempted(claim.entry);
+            if (!Policy.interaction.selectOptions(ctx.interaction, decision.optionIds)) { claim.entry.outcome = 'unknown'; coordinator.postcondition(claim.entry, btn); return; }
+            claim.entry.outcome = 'unknown'; claim.entry.postcondition = 'approval-ui-changed';
+            report('CLICK', Object.assign({ p: matched, b: text, options: decision.optionIds, autoSubmit: decision.autoSubmit === true, intentId: intent.key, outcome: 'answer-selected' }, decision));
+            if (decision.autoSubmit !== true) setTimeout(function() { Policy.interaction.submit(ctx.interaction); }, 300);
+            return;
+        }
+        coordinator.attempted(claim.entry); markClicked(btn, text);
+        try { btn.click(); } catch(_) { coordinator.postcondition(claim.entry, btn); return; }
+        report('CLICK', Object.assign({ p: matched, b: text, cmd: cmd, intentId: intent.key, identityEvidence: intent.evidence, adapterVersion: 'adapter-v1', latencyMs: Date.now() - claim.entry.at, outcome: 'attempted' }, decision));
+        setTimeout(function() { coordinator.postcondition(claim.entry, btn); }, 1000);
+        if (matched === 'Expand') setTimeout(safeScanner, APPROVE_MS);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -502,14 +490,17 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     var _shadowRoots = [];
     var MAX_SHADOW_ROOTS = 200; // Cap to prevent memory leak
     var _origAttachShadow = Element.prototype.attachShadow;
+    var wrappedAttachShadow;
     var _observedShadowRoots = new WeakSet();
     var _scanTimer = null;
 
     function triggerScan() {
-        if (_scanTimer) clearTimeout(_scanTimer);
+        if (current.eventScheduler) { scheduler.trigger(); return; }
+        if (_scanTimer) return;
         _scanTimer = setTimeout(function() {
+            _scanTimer = null;
             try { safeScanner(); } catch(_) {}
-        }, 100);
+        }, APPROVE_MS);
     }
 
     function onMutation(mutations) {
@@ -534,9 +525,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     }
 
     try {
-        Element.prototype.attachShadow = function(init) {
+        Element.prototype.attachShadow = wrappedAttachShadow = function(init) {
             var opts = init || {};
-            if (opts.mode === 'closed') opts = Object.assign({}, opts, { mode: 'open' });
             var shadow = _origAttachShadow.call(this, opts);
             // Cap shadow roots array to prevent memory leak
             if (_shadowRoots.length >= MAX_SHADOW_ROOTS) {
@@ -552,7 +542,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             if (!_observedShadowRoots.has(shadow)) {
                 _observedShadowRoots.add(shadow);
                 try {
-                    var obs = new MutationObserver(onMutation);
+                    var obs = observe();
                     obs.observe(shadow, { childList: true, subtree: true, attributes: true,
                         attributeFilter: ['class','style','disabled','aria-hidden','aria-label','data-state'] });
                 } catch(_) { /* DOM op */ }
@@ -575,7 +565,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
                     if (!_observedShadowRoots.has(sr)) {
                         _observedShadowRoots.add(sr);
                         try {
-                            var obs = new MutationObserver(onMutation);
+                            var obs = observe();
                             obs.observe(sr, { childList: true, subtree: true, attributes: true,
                                 attributeFilter: ['class','style','disabled','aria-hidden','aria-label','data-state'] });
                         } catch(_) {}
@@ -592,19 +582,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     //  SOLUTION 4: Nested iframe scanning
     //  Some consent dialogs live in iframes within the OOPIF.
     // ══════════════════════════════════════════════════════════
-    function getIframeDocuments() {
-        var docs = [];
-        try {
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                try {
-                    var doc = iframes[i].contentDocument || (iframes[i].contentWindow && iframes[i].contentWindow.document);
-                    if (doc && doc.body) docs.push(doc);
-                } catch(_) { /* DOM op */ } // cross-origin — skip silently
-            }
-        } catch(_) { /* DOM op */ }
-        return docs;
-    }
+    function getIframeDocuments() { return []; }
 
     // ══════════════════════════════════════════════════════════
     //  SOLUTION 5: Unified button collector
@@ -654,8 +632,10 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     // ── Core: Scan & Click (enhanced) ───────────────────────
     var _scanCount = 0;
     function scanAndClick() {
+        if (disposed || Date.now() >= policyExpiresAt || current.enabled !== true || current.paused || current.active === false) return;
         collectShadowRoots(document.body);
         var btns = collectAllButtons();
+        _collectedButtonCount = btns.length;
         _scanCount++;
 
         // Every 20 scans (~30s), emit a SCAN debug report so Diagnostics shows live data
@@ -668,8 +648,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             report('DEBUG', { scan: _scanCount, btns: btns.length, labels: labels.slice(0,10), url: location.href.slice(0,80) });
         }
 
-        for (var i = 0; i < btns.length; i++) {
-            var b = btns[i];
+        for (var i = 0; i < Math.min(btns.length, 64); i++) {
+            var b = btns[(i + _scanOffset) % btns.length];
 
             // Skip invisible/disabled
             if (b.disabled) continue;
@@ -681,7 +661,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             var text = labelOf(b);
             if (!text || text.length > 60) continue;
 
-            var matched = findMatch(text);
+            var matched = Policy.interactionPattern(b, current) || findMatch(text);
             var isSkipBtn = text === 'Skip' || text === 'Skip Action' || text === 'Skip step' || text.indexOf('Skip') === 0;
             var browserContext = false;
 
@@ -741,25 +721,16 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             var visibleText = ((b.innerText || b.textContent || '').trim().split('\\n')[0] || '').trim();
             if (visibleText && visibleText !== text && visibleText.length <= 60 && isEditorAccept(visibleText)) continue;
 
-            // Expand: one-shot per element, but allow re-expand after 5s
-            // (React may reuse DOM nodes for new steps)
-            if (matched === 'Expand') {
-                var expandKey = 'expand:' + (b.getBoundingClientRect().top | 0);
-                if (_clickedIds[expandKey] && Date.now() - _clickedIds[expandKey] < 5000) continue;
-                _clickedIds[expandKey] = Date.now();
-            }
-
             // Safety guard for Run/Execute commands
-            if (matched === 'Run' || matched === 'Run Task' || matched === 'Execute') {
+            if (matched === 'Run' || matched === 'Run Task' || matched === 'Execute' || Policy.requiresCommand(matched)) {
                 // Global cooldown: don't click Run too fast (terminal needs time)
                 if (isRunCooldown()) continue;
                 
                 var cmd = extractCmd(b);
-                if (cmd) {
-                    var blocked = isBlocked(cmd);
-                    if (blocked) {
-                        markClicked(b, text);
-                        report('BLOCKED', { cmd: cmd.slice(0, 500), reason: blocked });
+                {
+                    var evaluation = Policy.evaluateAction(matched, cmd, Policy.actionContext(b, current));
+                    if (!evaluation.allowed) {
+                        report('BLOCKED', Object.assign({ cmd: cmd.slice(0, 500), outcome: 'unknown' }, evaluation));
                         continue;
                     }
                 }
@@ -788,12 +759,11 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
 
             // ── DRY RUN: report but don't click ──
             if (DRY_RUN) {
-                report('DRYRUN', { p: matched, b: text, pos: (b.getBoundingClientRect().top | 0) });
+                report('DRYRUN', Object.assign({ p: matched, b: text, pos: (b.getBoundingClientRect().top | 0), outcome: 'unknown' }, Policy.evaluateAction(matched, Policy.readsCommand(matched) ? extractCmd(b) : '', Policy.actionContext(b, current))));
                 continue;
             }
 
-            // ── CLICK (multi-layer) ──
-            markClicked(b, text);
+            // ── Single activation ──
             executeClick(b, matched, text);
         }
     }
@@ -825,37 +795,18 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         } catch(_) { /* DOM op */ }
     }, 1000);
 
-    // Time-based cleanup for _clickedIds — runs every 30s regardless of click count.
-    // Also enforces a hard size cap of 2000 entries to guard against high-click-rate sessions
-    // (e.g. busy dashboards with many tool steps) accumulating unbounded memory between ticks.
-    var CLICKED_IDS_MAX = 2000;
-    setInterval(function() {
-        var cutoff = Date.now() - 30000;
-        for (var k in _clickedIds) {
-            if (_clickedIds[k] < cutoff) delete _clickedIds[k];
-        }
-        // Hard size cap: if still over limit, evict oldest entries first
-        var keys = Object.keys(_clickedIds);
-        if (keys.length > CLICKED_IDS_MAX) {
-            keys.sort(function(a, b) { return _clickedIds[a] - _clickedIds[b]; });
-            for (var i = 0; i < keys.length - CLICKED_IDS_MAX; i++) {
-                delete _clickedIds[keys[i]];
-            }
-        }
-    }, 30000);
-
     // Guard: prevent concurrent scans — if a scan is still running (e.g. slow shadow root
     // collection across many nested webviews), skip the next tick rather than overlap.
-    var _scanning = false;
+    var _scanning = false, _scanOffset = 0, _collectedButtonCount = 0;
     function safeScanner() {
         if (_scanning) return;
-        _scanning = true;
-        try { scanAndClick(); } catch(_) { /* non-critical */ } finally { _scanning = false; }
+        _scanning = true; _collectedButtonCount = 0;
+        try { scanAndClick(); } catch(_) { /* non-critical */ } finally { _scanning = false; _scanOffset += 64; if (current.eventScheduler && _scanOffset < _collectedButtonCount) scheduler.trigger(); else _scanOffset = 0; }
     }
 
     // Event-driven MutationObserver initialization on the main document
     try {
-        var docObs = new MutationObserver(onMutation);
+        var docObs = observe();
         docObs.observe(document.documentElement, {
             childList: true,
             subtree: true,
@@ -864,21 +815,21 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         });
     } catch(_) {}
 
-    // Enhanced safety net poll — 15s interval (almost 0% CPU overhead, event-driven MutationObserver handles fast scan)
-    setInterval(safeScanner, 15000);
+    // Scan cadence follows the configured approval interval.
+    var pollTimer = setInterval(safeScanner, APPROVE_MS * (current.eventScheduler ? 4 : 1));
 
     // Initial scan with delay (let page settle)
     setTimeout(safeScanner, 1000);
 
     // ── Auto-Scroll (stick-to-bottom) ───────────────────────
     // Tracks per-element "was at bottom" state. If user scrolls up, we let them read.
-    if (SCROLL_ON) {
+    {
         var _agWasAtBottom = new WeakMap();
         var _agJustScrolled = new WeakSet();
         var BOTTOM_THRESHOLD = 150;
         var _isAutoScrolling = false;
 
-        window.addEventListener('scroll', function(e) {
+        var scrollHandler = function(e) {
             var el = e.target;
             if (!el || el.nodeType !== 1) return;
             
@@ -891,6 +842,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
                 return;
             }
             if (_isAutoScrolling) return;
+            lastUserScroll = Date.now();
 
             var gap = el.scrollHeight - el.scrollTop - el.clientHeight;
             if (gap <= BOTTOM_THRESHOLD) {
@@ -900,9 +852,12 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
                 // User scrolled up to read
                 _agWasAtBottom.set(el, false);
             }
-        }, true);
+        };
+        window.addEventListener('scroll', scrollHandler, true);
+        listeners.push(['scroll', scrollHandler, true]);
 
-        setInterval(function() {
+        scrollTick = function() {
+            if (!canAct() || !SCROLL_ON || Date.now() - lastUserScroll < SCROLL_PAUSE) return;
             var candidates = document.querySelectorAll(
                 '.antigravity-agent-side-panel, [class*=chat], [class*=agent], [class*=cascade], [class*=cortex]'
             );
@@ -943,7 +898,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
                 });
                 setTimeout(function () { _isAutoScrolling = false; }, 200);
             }
-        }, 800);
+        }
+        var scrollTimer = setInterval(scrollTick, SCROLL_MS);
     }
 
     // ── Self-Healing ────────────────────────────────────────
@@ -966,6 +922,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
 
         function dismissOnce() {
             _dismissTimer = null;
+            if (!canAct()) return;
             try {
                 var toasts = document.querySelectorAll(
                     '.notifications-toasts .notification-toast, .notification-list-item, .notification-center .notification-toast-container'
@@ -1011,15 +968,23 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         try {
             var notifArea = document.querySelector('.notifications-toasts, .notification-center, body');
             if (notifArea) {
-                var notifObs = new MutationObserver(function(muts) {
+                var notifObs = new window.MutationObserver(function(muts) {
+                    if (disposed) return;
                     // Debounce: only dismiss once per 300ms burst of mutations
                     if (_dismissTimer) return;
                     _dismissTimer = setTimeout(dismissOnce, 300);
                 });
+                observers.push(notifObs);
                 notifObs.observe(notifArea, { childList: true, subtree: true });
             }
         } catch(_) { /* DOM op */ }
     })();
+
+    // ── Host job lifecycle producer ───────────────────────────
+    // Subscribes to the workbench agentStateProvider found through
+    // React/Preact fiber expandos and reports [GRAV:JOB] events.
+    var jobProducer = CreateJobProducer({ report: report, setTimeout: setTimeout });
+    jobProducer.start();
 
     report('BOOT', { v:2, patterns: PATTERNS.length, blacklist: BLACKLIST.length, scroll: SCROLL_ON, shadows: _shadowRoots.length, url: location.href.substring(0, 100) });
 
