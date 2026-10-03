@@ -310,6 +310,55 @@ function failedState(id, extra = {}) {
     producer.dispose();
 }
 
+// ── 17. retry: same conversation, new trajectoryId = new job ──
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-retry', {
+        trajectorySlice: { trajectoryId: 'traj-1', stepsInSlice: [], lastStepError: null },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$rt = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    // first trajectory fails
+    provider._fire(runningState('conv-retry', {
+        status: 1, fullyIdle: true,
+        trajectorySlice: { trajectoryId: 'traj-1', stepsInSlice: [{ status: 7 }], lastStepError: 'boom', latestStep: { status: 7 } },
+    }));
+    // host retries → new trajectoryId in same conversation
+    provider._fire(runningState('conv-retry', {
+        trajectorySlice: { trajectoryId: 'traj-2', stepsInSlice: [], lastStepError: null },
+    }));
+    const retryStart = emitted.find(e => e.jobId === 'traj-2' && e.type === 'recovery-start');
+    assert.ok(retryStart); assert.equal(retryStart.parentJobId, 'traj-1');
+    const t2Start = emitted.find(e => e.jobId === 'traj-2' && e.type === 'started');
+    assert.ok(t2Start); assert.equal(t2Start.parentJobId, 'conv-retry');
+    // traj-1 job is dead — its failed event present
+    assert.ok(emitted.some(e => e.jobId === 'traj-1' && e.type === 'failed'));
+    provider._fire(idleDoneState('conv-retry', {
+        trajectorySlice: { trajectoryId: 'traj-2', stepsInSlice: [], lastStepError: null },
+    }));
+    assert.ok(emitted.some(e => e.jobId === 'traj-2' && e.type === 'completed'));
+    producer.dispose();
+}
+
+// ── 18. first trajectory fallback: no trajectoryId → conv id ──
+{
+    const emitted = [];
+    const provider = makeProvider(runningState('conv-fallback', {
+        trajectorySlice: { trajectoryId: '', stepsInSlice: [], lastStepError: null },
+    }));
+    const win = fakeWindow();
+    win.document.body.__reactContainer$fb = { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } };
+    const producer = createJobProducer({ report: (_t, d) => emitted.push(d), rescanMs: 1000, setTimeout: fn => { fn(); return 1; } });
+    const _orig = global.window; global.window = win;
+    producer.start(); global.window = _orig;
+    assert.equal(emitted[0].jobId, 'conv-fallback');
+    assert.equal(emitted[0].type, 'started');
+    producer.dispose();
+}
+
 // ── 16. tracker records parentJobId on job + snapshot count ──
 {
     const tracker = createJobTracker({}, { now: () => 1000 });

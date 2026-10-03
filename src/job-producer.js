@@ -32,15 +32,28 @@ function createJobProducer(options = {}) {
     let rescanTimer = null;
     let lastProvider = null;
 
-    // Per-conversation emission state: conversationId → {
-    //   started, lastActive, hadWaiting, seq, firstProgressEmitted }
+    // Per-job emission state: jobId → { started, hadWaiting, seq, firstProgress, dead }
     const jobs = new Map();
+    // conversationId → latest jobId, for retry/re-run attribution
+    const conversationJobs = new Map();
 
-    function emit(eventId, ev) {
-        report('JOB', Object.assign({ eventId: eventId, evidence: 'host-job-lifecycle' }, ev));
+    function emit(job, jid, ev) {
+        const seq = ++job.seq;
+        ev.sequence = seq;
+        report('JOB', Object.assign({ eventId: seq + ':' + jid, evidence: 'host-job-lifecycle' }, ev));
     }
 
     function jobIdOf(state) {
+        // trajectoryId is per-run; a host retry/rerun rotates it while the
+        // conversationId stays. Job id = trajectoryId when present so each
+        // run is a distinct job; conversationId attribution rides along.
+        const slice = state && state.trajectorySlice;
+        const tid = slice && slice.trajectoryId;
+        const id = typeof tid === 'string' && tid.length > 0 ? tid : (state && (state.conversationId || state.cascadeId));
+        return typeof id === 'string' && id.length > 0 && id.length <= 300 ? id : null;
+    }
+
+    function conversationIdOf(state) {
         const id = state && (state.conversationId || state.cascadeId);
         return typeof id === 'string' && id.length > 0 && id.length <= 300 ? id : null;
     }
@@ -152,9 +165,20 @@ function createJobProducer(options = {}) {
 
         if (!job) {
             if (!done && status !== undefined) {
+                const conv = conversationIdOf(state);
+                const prev = conv ? conversationJobs.get(conv) : null;
                 job = { started: true, seq: 0, firstProgress: false, hadWaiting: false };
                 jobs.set(jid, job);
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'started', sequence: job.seq, status: status });
+                // Re-run in the same conversation = retry of the previous job.
+                if (prev && conv && prev !== jid) {
+                    const prevJob = jobs.get(prev);
+                    if (prevJob && prevJob.dead) {
+                        emit(job, jid, { jobId: jid, type: 'recovery-start', parentJobId: prev });
+                    }
+                }
+                const started = { jobId: jid, type: 'started', status: status };
+                if (conv && conv !== jid) { conversationJobs.set(conv, jid); started.parentJobId = conv; }
+                emit(job, jid, started);
             } else {
                 return;
             }
@@ -164,8 +188,8 @@ function createJobProducer(options = {}) {
 
         if (waitingStep && !job.hadWaiting) {
             job.hadWaiting = true;
-            emit(++job.seq + ':' + jid, {
-                jobId: jid, type: 'waiting', sequence: job.seq,
+            emit(job, jid, {
+                jobId: jid, type: 'waiting',
                 waitReason: waitReason(waitingStep), toolName: toolName(waitingStep),
             });
         } else if (!waitingStep && job.hadWaiting) {
@@ -175,9 +199,9 @@ function createJobProducer(options = {}) {
         if (done) {
             job.dead = true;
             if (err || latestFailed) {
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'failed', sequence: job.seq, error: err ? String(err).slice(0, 200) : undefined });
+                emit(job, jid, { jobId: jid, type: 'failed', error: err ? String(err).slice(0, 200) : undefined });
             } else {
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'completed', sequence: job.seq });
+                emit(job, jid, { jobId: jid, type: 'completed' });
             }
             return;
         }
@@ -185,7 +209,7 @@ function createJobProducer(options = {}) {
         if (active && !waitingStep) {
             if (!job.firstProgress) {
                 job.firstProgress = true;
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'progress', sequence: job.seq, phase: 'execution' });
+                emit(job, jid, { jobId: jid, type: 'progress', phase: 'execution' });
             }
         }
 
@@ -209,19 +233,24 @@ function createJobProducer(options = {}) {
             if (!job) {
                 job = { started: true, seq: 0, firstProgress: false, hadWaiting: false };
                 jobs.set(jid, job);
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'started', sequence: job.seq, parentJobId: parentId });
+                emit(job, jid, { jobId: jid, type: 'started', parentJobId: parentId });
                 if (done) {
                     // Subagent terminal before producer attached — still count it.
                     job.dead = true;
-                    emit(++job.seq + ':' + jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed', sequence: job.seq });
+                    emit(job, jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed' });
                     continue;
                 }
             }
             if (job.dead) continue;
+            // Re-run of the same subagent key: host bumps lastRunStartMs.
+            if (Number.isFinite(s.lastRunStartMs) && Number.isFinite(job.lastRunStartMs) && s.lastRunStartMs > job.lastRunStartMs) {
+                emit(job, jid, { jobId: jid, type: 'recovery-start' });
+            }
+            if (Number.isFinite(s.lastRunStartMs)) job.lastRunStartMs = s.lastRunStartMs;
             if (s.hasWaitingStep && !job.hadWaiting) {
                 job.hadWaiting = true;
-                emit(++job.seq + ':' + jid, {
-                    jobId: jid, type: 'waiting', sequence: job.seq,
+                emit(job, jid, {
+                    jobId: jid, type: 'waiting',
                     waitReason: waitReason(s.firstWaitingStep), toolName: toolName(s.firstWaitingStep),
                 });
             } else if (!s.hasWaitingStep && job.hadWaiting) {
@@ -229,12 +258,12 @@ function createJobProducer(options = {}) {
             }
             if (done) {
                 job.dead = true;
-                emit(++job.seq + ':' + jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed', sequence: job.seq });
+                emit(job, jid, { jobId: jid, type: s.killed || latestFailed ? 'failed' : 'completed' });
                 continue;
             }
             if (!s.hasWaitingStep && !job.firstProgress) {
                 job.firstProgress = true;
-                emit(++job.seq + ':' + jid, { jobId: jid, type: 'progress', sequence: job.seq, phase: 'subagent' });
+                emit(job, jid, { jobId: jid, type: 'progress', phase: 'subagent' });
             }
         }
     }
@@ -273,6 +302,7 @@ function createJobProducer(options = {}) {
         if (rescanTimer !== null) { clearTimeout(rescanTimer); rescanTimer = null; }
         if (unbindProvider) { try { unbindProvider(); } catch { /* noop */ } unbindProvider = null; }
         jobs.clear();
+        conversationJobs.clear();
         lastProvider = null;
     }
 
