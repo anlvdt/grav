@@ -1,13 +1,44 @@
 {
     "name": "grav",
-    "displayName": "Grav — Autopilot for Antigravity",
-    "description": "Autopilot cho Antigravity AI. Auto-approve, auto-scroll, quota radar, AI learning engine.",
-    "version": "1.0.0",
+    "displayName": "Antigravity Auto Accept — Grav (Auto Approve / Auto Run)",
+    "description": "Auto accept edits and auto approve supported Run prompts in Antigravity IDE with configurable terminal rules, dry run and auto scroll.",
+    "version": "4.0.21",
+    "icon": "icons/icon.png",
     "publisher": "ANLE",
+    "author": {
+        "name": "An Le",
+        "email": "anlvdt@gmail.com",
+        "url": "https://github.com/anlvdt"
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/anlvdt/grav"
     },
+    "homepage": "https://github.com/anlvdt/grav#readme",
+    "bugs": {
+        "url": "https://github.com/anlvdt/grav/issues"
+    },
+    "keywords": [
+        "antigravity",
+        "antigravity auto accept",
+        "auto accept",
+        "auto-accept",
+        "auto approve",
+        "auto-approve",
+        "auto run",
+        "auto-run",
+        "auto clicker",
+        "auto click",
+        "accept all",
+        "agent",
+        "approval",
+        "terminal",
+        "automation",
+        "auto scroll",
+        "autopilot",
+        "cdp"
+    ],
+    "license": "MIT",
     "engines": {
         "vscode": "^1.60.0"
     },
@@ -15,7 +46,8 @@
         "ui"
     ],
     "categories": [
-        "Other"
+        "Other",
+        "Machine Learning"
     ],
     "activationEvents": [
         "onStartupFinished"
@@ -23,14 +55,6 @@
     "main": "./src/extension.js",
     "contributes": {
         "commands": [
-            {
-                "command": "grav.inject",
-                "title": "Grav: Inject Runtime"
-            },
-            {
-                "command": "grav.eject",
-                "title": "Grav: Eject Runtime"
-            },
             {
                 "command": "grav.dashboard",
                 "title": "Grav: Dashboard"
@@ -46,6 +70,82 @@
             {
                 "command": "grav.learnStats",
                 "title": "Grav: View Learning Stats"
+            },
+            {
+                "command": "grav.refreshObserver",
+                "title": "Grav: Refresh Observer (Force re-inject)"
+            },
+            {
+                "command": "grav.forceReconnect",
+                "title": "Grav: Force Reconnect CDP"
+            },
+            {
+                "command": "grav.pauseAccept",
+                "title": "Grav: Pause Auto-Accept"
+            },
+            {
+                "command": "grav.toggleScroll",
+                "title": "Grav: Toggle Auto-Scroll"
+            },
+            {
+                "command": "grav.resumeAccept",
+                "title": "Grav: Resume Auto-Accept"
+            },
+            {
+                "command": "grav.stopAllTerminals",
+                "title": "Grav: Stop All Terminals"
+            },
+            {
+                "command": "grav.acceptAll",
+                "title": "Grav: Force Accept All"
+            },
+            {
+                "command": "grav.toggleDryRun",
+                "title": "Grav: Toggle Dry Run (scan without clicking)"
+            },
+            {
+                "command": "grav.initProjectConfig",
+                "title": "Grav: Init Project Config (.vscode/grav.json)"
+            },
+            {
+                "command": "grav.purgeLearning",
+                "title": "Grav: Purge Bad Learning Data"
+            },
+            {
+                "command": "grav.resetLearningData",
+                "title": "Grav: Factory Reset Learning Data"
+            },
+            {
+                "command": "grav.toggleSkipBrowserAgent",
+                "title": "Grav: Toggle Skip Browser Agent"
+            },
+            {
+                "command": "grav.applyOperationPreset",
+                "title": "Grav: Apply Operation Preset"
+            },
+            {
+                "command": "grav.recordFalsePositive",
+                "title": "Grav: Record False Positive"
+            },
+            {
+                "command": "grav.recordMissedAction",
+                "title": "Grav: Record Missed Click"
+            },
+            {
+                "command": "grav.removeRuntime",
+                "title": "Grav: Remove Injected Runtime"
+            },
+            {
+                "command": "grav.setScanSpeed",
+                "title": "Grav: Set Scan Speed (permissions unchanged)"
+            },
+            {
+                "command": "grav.permissionProfile",
+                "title": "Grav: Select Permission Profile"
+            },
+            {
+                "command": "grav.configureAutopilot",
+                "title": "Grav: Configure Autopilot Profile (One-Time Setup)"
             }
         ],
         "keybindings": [
@@ -53,6 +153,17 @@
                 "command": "grav.dashboard",
                 "key": "ctrl+shift+d",
                 "mac": "cmd+shift+d"
+            },
+            {
+                "command": "grav.pauseAccept",
+                "key": "ctrl+shift+p",
+                "mac": "cmd+shift+p",
+                "when": "false"
+            },
+            {
+                "command": "grav.stopAllTerminals",
+                "key": "ctrl+shift+q",
+                "mac": "cmd+shift+q"
             }
         ],
         "configuration": {
@@ -61,12 +172,34 @@
                 "grav.enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Bật/tắt Grav | Enable/disable Grav"
+                    "description": "Enable or disable Grav entirely."
                 },
                 "grav.autoScroll": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Tự cuộn chat xuống cuối | Stick-to-bottom"
+                    "description": "Keep chat panel scrolled to the bottom while the AI is responding. Pauses automatically when the user scrolls up."
+                },
+                "grav.operationMode": {
+                    "type": "string",
+                    "enum": [
+                        "safe",
+                        "balanced",
+                        "fast",
+                        "custom"
+                    ],
+                    "default": "custom",
+                    "description": "Legacy combined presets (labels, scan/scroll settings and browser skipping). Use Grav: Set Scan Speed for speed-only changes and Grav: Select Permission Profile for permissions."
+                },
+                "grav.presetMode": {
+                    "type": "string",
+                    "enum": [
+                        "1.19.6",
+                        "1.23.2",
+                        "1.24+",
+                        "custom"
+                    ],
+                    "default": "1.24+",
+                    "description": "Select preset button patterns based on Antigravity/Windsurf version. 1.19.6 = v1.19–v1.22; 1.23.2 = v1.23; 1.24+ = latest (Run Task, Continue); custom = use grav.approvePatterns."
                 },
                 "grav.approvePatterns": {
                     "type": "array",
@@ -74,39 +207,39 @@
                         "type": "string"
                     },
                     "default": [
+                        "Accept",
+                        "Accept All",
+                        "Retry",
+                        "Run Task",
                         "Run",
-                        "Allow",
-                        "Always Allow",
-                        "Keep Waiting",
-                        "Continue",
-                        "Retry"
+                        "Approve",
+                        "Allow in Workspace"
                     ],
-                    "description": "Danh sách nút tự bấm | Button labels to auto-approve"
+                    "description": "List of button labels to auto-click in the agent panel. Case-sensitive. Add custom labels for per-project buttons."
                 },
                 "grav.scrollPauseMs": {
                     "type": "number",
-                    "default": 7000,
-                    "description": "Nghỉ cuộn khi user kéo lên (ms)"
+                    "default": 15000,
+                    "description": "How long to pause auto-scroll after the user manually scrolls up (milliseconds)."
                 },
                 "grav.scrollIntervalMs": {
                     "type": "number",
                     "default": 500,
-                    "description": "Tốc độ quét cuộn (ms)"
+                    "description": "Interval between scroll ticks (milliseconds)."
                 },
                 "grav.approveIntervalMs": {
                     "type": "number",
                     "default": 1000,
-                    "description": "Tốc độ quét nút (ms)"
+                    "description": "Interval between button scan cycles (milliseconds). Minimum enforced: 100ms; the dashboard slider starts at 200ms."
                 },
                 "grav.language": {
                     "type": "string",
                     "enum": [
-                        "vi",
-                        "en",
-                        "zh"
+                        "en"
                     ],
-                    "default": "vi",
-                    "description": "Ngôn ngữ | Language"
+                    "default": "en",
+                    "description": "Dashboard language. The dashboard currently supports English only.",
+                    "deprecationMessage": "Deprecated: the dashboard currently supports English only; changing this setting has no effect."
                 },
                 "grav.terminalWhitelist": {
                     "type": "array",
@@ -114,7 +247,7 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Lệnh terminal thêm vào whitelist | Additional whitelisted terminal commands"
+                    "description": "Explicit terminal grants. A single executable is a legacy broad grant for all literal arguments; multiple tokens form a literal argv-prefix grant. Blacklist takes priority. Unknown commands and unsupported shell syntax require manual review; grants do not prove safety."
                 },
                 "grav.terminalBlacklist": {
                     "type": "array",
@@ -122,29 +255,278 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Lệnh terminal bị chặn | Blocked terminal commands (supports substring & /regex/)"
+                    "description": "Commands Grav will not auto-approve; host execution permissions are unchanged. Takes priority over grants. Supports boundary-aware literal patterns and /regex/ rules."
                 },
                 "grav.learnEnabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Tự học thói quen approve/reject | Adaptive learning from user behavior"
+                    "description": "Observe explicit approve/reject feedback and suggest policy candidates. Suggestion scores are not safety probabilities and learning never generates authorization."
                 },
                 "grav.learnThreshold": {
                     "type": "number",
                     "default": 3,
                     "minimum": 1,
                     "maximum": 50,
-                    "description": "Số lần approve để suggest whitelist | Approvals needed to suggest whitelisting"
+                    "description": "Minimum explicit user approvals before a candidate suggestion, also requiring sufficient suggestion score. Manage Terminal opens explicit policy management; suggestions do not change grants."
+                },
+                "grav.cdpEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable Chrome DevTools Protocol engine. Required to reach buttons inside OOPIF webviews. Auto-configured on first install."
+                },
+                "grav.cdpPort": {
+                    "type": "number",
+                    "default": 9333,
+                    "description": "CDP remote debugging port. Default 9333 avoids conflict with Antigravity Browser Control (9222)."
+                },
+                "grav.skipTerminalAccept": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Native acceptance is always restricted to known edit APIs. Blind terminal acceptance is disabled regardless of this legacy setting.",
+                    "deprecationMessage": "Deprecated: the native edit restriction is always active. Setting this legacy flag to false cannot enable blind acceptance APIs."
+                },
+                "grav.dryRun": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Dry Run mode: scan and match buttons but do not click. Use for debugging. Activity log shows what would be clicked."
+                },
+                "grav.skipBrowserAgent": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Skip auto-click when Browser Agent is active. Pauses Grav when Antigravity triggers a browser/computer-use agent."
+                },
+                "grav.permissionProfile": {
+                    "type": "string",
+                    "enum": [
+                        "legacy",
+                        "observe",
+                        "edits",
+                        "terminal"
+                    ],
+                    "default": "legacy",
+                    "description": "Independent of scan speed. Observe: no auto-approval; Edits: command-free edit/UI actions; Terminal: edits plus scoped exact/prefix rules only, without legacy grants. Browser/MCP approvals remain manual outside Legacy. Legacy preserves P0 label and executable-grant behavior."
+                },
+                "grav.permissionRules": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "default": [],
+                    "description": "Explicit Grav exact/prefix argv rules with scope and expiry. Use Manage Terminal for preview, create, revoke and history. Session rules are memory-only; project rules bind to the recorded workspace. Host permissions are unchanged."
+                },
+                "grav.autopilotProfile": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false,
+                        "grants": []
+                    },
+                    "additionalProperties": false,
+                    "description": "Configure exact permission targets and scopes once for supported Antigravity permission cards. Observe profile remains non-actuating.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "grants": {
+                            "type": "array",
+                            "maxItems": 256,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id",
+                                    "effect",
+                                    "operation",
+                                    "target",
+                                    "scope"
+                                ],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "effect": {
+                                        "type": "string",
+                                        "enum": [
+                                            "allow",
+                                            "deny"
+                                        ]
+                                    },
+                                    "operation": {
+                                        "type": "string",
+                                        "enum": [
+                                            "command",
+                                            "read_file",
+                                            "write_file",
+                                            "read_url",
+                                            "execute_url",
+                                            "mcp"
+                                        ]
+                                    },
+                                    "target": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 2000,
+                                        "description": "Exact permission target; wildcards are not supported."
+                                    },
+                                    "scope": {
+                                        "type": "string",
+                                        "enum": [
+                                            "once",
+                                            "conversation",
+                                            "project",
+                                            "workspace",
+                                            "global"
+                                        ]
+                                    },
+                                    "workspace": {
+                                        "type": "string",
+                                        "description": "Optional restriction to the exact active workspace."
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "grav.retryBudget": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false
+                    },
+                    "additionalProperties": false,
+                    "description": "Automatic Retry/Resume clicks. Disabled by default. When enabled, Grav clicks Retry, Try Again, Resume or Resume Conversation at most maxPerConversation times per host conversation (1-8). Quota waits are not retries and never consume the budget.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": false
+                        },
+                        "maxPerConversation": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 8,
+                            "default": 1
+                        }
+                    }
+                },
+                "grav.decisionRules": {
+                    "type": "object",
+                    "default": {
+                        "enabled": false
+                    },
+                    "additionalProperties": false,
+                    "description": "Configured answers for Antigravity ask_question cards. Disabled by default; only exact fingerprint + scope matches actuate. Sensitive questions never auto-answer.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "version": {
+                            "type": "string",
+                            "maxLength": 200
+                        },
+                        "paused": {
+                            "type": "boolean"
+                        },
+                        "rules": {
+                            "type": "array",
+                            "maxItems": 256,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id",
+                                    "kind",
+                                    "fingerprint",
+                                    "scope",
+                                    "answer"
+                                ],
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                            "question",
+                                            "form",
+                                            "review-plan"
+                                        ]
+                                    },
+                                    "questionId": {
+                                        "type": "string"
+                                    },
+                                    "fingerprint": {
+                                        "type": "string",
+                                        "pattern": "^decision-v1:"
+                                    },
+                                    "scope": {
+                                        "type": "object",
+                                        "properties": {
+                                            "project": {
+                                                "type": "string"
+                                            },
+                                            "taskId": {
+                                                "type": "string"
+                                            },
+                                            "conversationId": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "answer": {
+                                        "type": "object",
+                                        "properties": {
+                                            "optionIds": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "values": {
+                                                "type": "object"
+                                            },
+                                            "decision": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "approve",
+                                                    "reject"
+                                                ]
+                                            }
+                                        }
+                                    },
+                                    "revisionId": {
+                                        "type": "string"
+                                    },
+                                    "expiresAt": {
+                                        "type": "number"
+                                    },
+                                    "revoked": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     },
     "scripts": {
         "vscode:prepublish": "echo ok",
-        "test": "jest --verbose",
-        "lint": "echo 'lint ok'"
+        "smoke": "node test/smoke-flows.test.js",
+        "test": "node test/run-all.js",
+        "package:vsix": "node scripts/package.js",
+        "release:check": "node scripts/package.js --check",
+        "release": "node scripts/release.js",
+        "build": "node scripts/package.js",
+        "verify:vsix": "node scripts/verify-vsix.js",
+        "test:webview": "node test/dashboard-webview.browser.js",
+        "pilot:replay": "node scripts/replay-pilot.js"
+    },
+    "dependencies": {
+        "ws": "^8.22.0"
     },
     "devDependencies": {
-        "jest": "^30.3.0"
+        "@vitejs/plugin-react": "^6.1.1",
+        "@vscode/vsce": "4.0.0",
+        "playwright": "1.63.0",
+        "vite": "^8.3.2",
+        "yauzl": "^3.4.0",
+        "yazl": "^2.5.1"
     }
 }

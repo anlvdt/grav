@@ -1,161 +1,442 @@
 // ═══════════════════════════════════════════════════════════════
-//  Grav — Dashboard webview
+//  Grav — Dashboard (webview panel management)
 // ═══════════════════════════════════════════════════════════════
-const vscode = require('vscode');
-const fs     = require('fs');
-const path   = require('path');
-const { state } = require('./state');
-const { SAFE_TERMINAL_CMDS, DEFAULT_BLACKLIST, LEARN } = require('./constants');
-const { cfg } = require('./utils');
-const { getPromotedCommands, getLearnStats } = require('./learning');
-const { writeRuntimeConfig } = require('./inject');
+'use strict';
 
-function refreshBar() {
-    const { refreshBar: refresh } = require('./extension');
-    refresh();
+const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const { DEFAULT_PATTERNS, SAFE_TERMINAL_CMDS, DEFAULT_BLACKLIST, PATTERN_GROUPS, PATTERN_DISPLAY, RISKY_PATTERNS } = require('./constants');
+const { cfg } = require('./utils');
+const { buildOperationPreset, getOperationPresets, normalizeOperationMode } = require('./operation-presets');
+
+let _panel = null;
+let _ctx = null;
+let _deps = null;
+let _statsTicker = null;
+let _brainTicker = null;
+let _lastSentStatsState = '';
+let _lastSentBrainState = '';
+let _lastSentRuntimeState = '';
+
+/**
+ * Get unique display patterns (hide variants, show only primary name)
+ */
+function getDisplayPatterns(allPatterns) {
+    const seen = new Set();
+    const result = [];
+    for (const p of allPatterns) {
+        const display = PATTERN_DISPLAY[p] || p;
+        if (!seen.has(display)) {
+            seen.add(display);
+            result.push(display);
+        }
+    }
+    return result;
 }
 
-function getDashboardHtml(c) {
-    let h = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard.html'), 'utf8');
-    const lang = c.language || 'vi';
-    h = h.replace(/\{\{LANG\}\}/g, lang);
-    h = h.replace('{{TOTAL}}', String(c.totalClicks || 0));
-    h = h.replace('{{ENABLED_CHK}}', c.enabled ? 'checked' : '');
-    h = h.replace('{{SCROLL_CHK}}', c.scrollOn !== false ? 'checked' : '');
-    h = h.replace(/\{\{APPROVE_MS\}\}/g, String(c.approveMs || 1000));
-    h = h.replace(/\{\{SCROLL_MS\}\}/g, String(c.scrollMs || 500));
-    h = h.replace(/\{\{PAUSE_MS\}\}/g, String(c.pauseMs || 7000));
-    h = h.replace('{{LANG_VI}}', lang === 'vi' ? 'selected' : '');
-    h = h.replace('{{LANG_EN}}', lang === 'en' ? 'selected' : '');
-    h = h.replace('{{LANG_ZH}}', lang === 'zh' ? 'selected' : '');
-    h = h.replace('{{PATTERNS_JSON}}', JSON.stringify(c.patterns));
-    h = h.replace('{{DISABLED_JSON}}', JSON.stringify(c.disabledPatterns));
-    h = h.replace('{{STATS_JSON}}', JSON.stringify(c.stats || {}));
-    h = h.replace('{{WHITE_COUNT}}', String(c.whiteCount || 0));
-    h = h.replace('{{BLACK_COUNT}}', String(c.blackCount || 0));
-    h = h.replace('{{LEARN_COUNT}}', String(c.learnCount || 0));
-    h = h.replace('{{LEARN_EPOCH}}', String(c.learnEpoch || 0));
-    h = h.replace('{{LEARN_TRACKING}}', String(c.learnTracking || 0));
-    h = h.replace('{{LEARN_PATTERNS}}', String(c.learnPatterns || 0));
-    h = h.replace('{{WIKI_PAGES}}', String(c.wikiPages || 0));
-    h = h.replace('{{WIKI_CONCEPTS}}', String(c.wikiConcepts || 0));
-    h = h.replace('{{WIKI_CONTRADICTIONS}}', String(c.wikiContradictions || 0));
-    h = h.replace('{{CONCEPTS_JSON}}', JSON.stringify(c.concepts || {}));
-    h = h.replace('{{WIKI_LOG_JSON}}', JSON.stringify(c.wikiLog || []));
+
+
+/**
+ * Open or close the dashboard panel.
+ * @param {vscode.ExtensionContext} ctx
+ * @param {object} deps - { learning, wiki, injection, getState, setState, onSave, onPolicyChanged, refreshBar }
+ */
+function toggle(ctx, deps) {
+    if (_panel) { _panel.dispose(); _panel = null; return; }
+    _ctx = ctx;
+    _deps = deps;
+
+    const mediaPath = vscode.Uri.file(path.join(_ctx.extensionPath, 'media'));
+    _panel = vscode.window.createWebviewPanel(
+        'gravDashboard', 'Grav — Dashboard',
+        vscode.ViewColumn.One, {
+            enableScripts: true,
+            localResourceRoots: [mediaPath],
+        }
+    );
+    _panel.onDidDispose(() => {
+        _panel = null;
+        _lastSentStatsState = '';
+        _lastSentBrainState = '';
+        _lastSentRuntimeState = '';
+        if (_statsTicker) clearInterval(_statsTicker);
+        if (_brainTicker) clearInterval(_brainTicker);
+        if (deps.onPolicyChanged) deps.onPolicyChanged();
+    });
+    _panel.onDidChangeViewState(() => {
+        if (deps.onPolicyChanged) deps.onPolicyChanged();
+    }, undefined, _ctx.subscriptions);
+
+    render();
+    setupMessageHandler();
+    startTickers();
+    if (deps.onPolicyChanged) deps.onPolicyChanged();
+}
+
+/** Get the panel reference (for external push messages). */
+function getPanel() { return _panel; }
+
+/** Push a message to the dashboard if open. */
+function postMessage(msg) {
+    if (_panel) try { _panel.webview.postMessage(msg); } catch (_) { }
+}
+
+/**
+ * Push getState().runtime ({ status, reasonCode, reason, workspace, policyVersion }) when it changes.
+ * A missing snapshot is sent as null; the webview shows it as unknown.
+ */
+function pushRuntime() {
+    const runtime = _deps.getState().runtime ?? null;
+    const serialized = JSON.stringify(runtime);
+    if (serialized === _lastSentRuntimeState) return;
+    _lastSentRuntimeState = serialized;
+    postMessage({ command: 'runtimeUpdated', runtime });
+}
+
+function render() {
+    if (!_panel) return;
+    const state = _deps.getState();
+    const learning = _deps.learning;
+    const wiki = _deps.wiki;
+    const dp = _ctx.globalState.get('disabledPatterns', []);
+    const w = wiki.getWiki();
+
+    _panel.webview.html = buildHtml({
+        version: _ctx?.extension?.packageJSON?.version || '0',
+        enabled: cfg('enabled', true),
+        scrollOn: cfg('autoScroll', true),
+        dryRun: cfg('dryRun', false),
+        skipBrowser: cfg('skipBrowserAgent', false),
+        skipTerminalAccept: cfg('skipTerminalAccept', true),
+        runtime: state.runtime ?? null,
+        pauseMs: cfg('scrollPauseMs', 7000),
+        scrollMs: cfg('scrollIntervalMs', 500),
+        patterns: cfg('approvePatterns', DEFAULT_PATTERNS),
+        disabledPatterns: dp,
+        projectPatterns: state.projectPatterns || [],
+        // grav.language is deprecated; the dashboard currently supports English only.
+        language: 'en',
+        approveMs: cfg('approveIntervalMs', 1000),
+        stats: state.stats,
+        totalClicks: state.totalClicks,
+        whiteCount: SAFE_TERMINAL_CMDS.length + learning.getWhitelist().length,
+        blackCount: DEFAULT_BLACKLIST.length + learning.getBlacklist().length,
+        terminalWhitelist: [...SAFE_TERMINAL_CMDS, ...learning.getWhitelist()],
+        terminalBlacklist: [...DEFAULT_BLACKLIST, ...learning.getBlacklist()],
+        learnCount: learning.getPromotedCommands().length,
+        learnEpoch: learning.getEpoch(),
+        learnTracking: Object.keys(learning.getData()).length,
+        learnPatterns: learning.getPatternCache().length,
+        wikiPages: Object.keys(w.index).length,
+        wikiConcepts: Object.keys(w.concepts).length,
+        wikiContradictions: wiki.getContradictions().length,
+        concepts: w.concepts,
+        wikiLog: (w.log || []).slice(-30),
+        allPatterns: getDisplayPatterns([...DEFAULT_PATTERNS, ...RISKY_PATTERNS]),
+        patternGroups: PATTERN_GROUPS,
+        operationMode: normalizeOperationMode(cfg('operationMode', 'custom')),
+        operationPresets: getOperationPresets(),
+        operationPresetConfigs: ['safe', 'balanced', 'fast'].map((mode) => buildOperationPreset(mode)).filter(Boolean),
+        trace: _deps.getTraceSnapshot ? _deps.getTraceSnapshot() : {},
+        roi: _deps.roi ? _deps.roi.getSummary() : {},
+        session: _deps.getSessionSafe ? _deps.getSessionSafe() : {},
+    });
+}
+
+function buildHtml(c) {
+    let h;
+    try {
+        h = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard-v2.html'), 'utf8');
+    } catch (e) {
+        return `<html><body style="padding:40px;color:#ccc;font-family:sans-serif"><h2>Dashboard load failed</h2><p>${e.message}</p></body></html>`;
+    }
+    const nonce = crypto.randomBytes(16).toString('hex');
+    
+    const replacements = {
+        NONCE: nonce,
+        LANG: 'en',
+        VERSION: c.version || '0',
+        TOTAL: String(c.totalClicks || 0),
+        ENABLED_CHK: c.enabled ? 'checked' : '',
+        SCROLL_CHK: c.scrollOn !== false ? 'checked' : '',
+        SKIP_TERMINAL_VAL: c.skipTerminalAccept !== false ? 'true' : 'false',
+        RUNTIME_JSON: JSON.stringify(c.runtime ?? null),
+        APPROVE_MS: String(c.approveMs || 1000),
+        SCROLL_MS: String(c.scrollMs || 500),
+        PAUSE_MS: String(c.pauseMs || 7000),
+        PATTERNS_JSON: JSON.stringify(c.patterns || []),
+        DISABLED_JSON: JSON.stringify(c.disabledPatterns || []),
+        PATTERN_GROUPS_JSON: JSON.stringify(c.patternGroups || {}),
+        STATS_JSON: JSON.stringify(c.stats || {}),
+        WHITE_COUNT: String(c.whiteCount || 0),
+        BLACK_COUNT: String(c.blackCount || 0),
+        TERMINAL_WHITELIST_JSON: JSON.stringify(c.terminalWhitelist || []),
+        TERMINAL_BLACKLIST_JSON: JSON.stringify(c.terminalBlacklist || []),
+        LEARN_COUNT: String(c.learnCount || 0),
+        LEARN_EPOCH: String(c.learnEpoch || 0),
+        LEARN_TRACKING: String(c.learnTracking || 0),
+        LEARN_PATTERNS: String(c.learnPatterns || 0),
+        WIKI_PAGES: String(c.wikiPages || 0),
+        WIKI_CONCEPTS: String(c.wikiConcepts || 0),
+        WIKI_CONTRADICTIONS: String(c.wikiContradictions || 0),
+        CONCEPTS_JSON: JSON.stringify(c.concepts || {}),
+        WIKI_LOG_JSON: JSON.stringify(c.wikiLog || []),
+        ALL_PATTERNS_JSON: JSON.stringify(c.allPatterns || []),
+        PROJECT_PATTERNS_JSON: JSON.stringify(c.projectPatterns || []),
+        TRACE_JSON: JSON.stringify(c.trace || {}),
+        OPERATION_PRESETS_JSON: JSON.stringify(c.operationPresets || []),
+        OPERATION_PRESET_CONFIGS_JSON: JSON.stringify(c.operationPresetConfigs || []),
+        OPERATION_MODE_JSON: JSON.stringify(c.operationMode || 'custom'),
+        DRYRUN_CHK: c.dryRun ? 'checked' : '',
+        DRYRUN_VAL: c.dryRun ? 'true' : 'false',
+        SKIP_BROWSER_CHK: c.skipBrowser ? 'checked' : '',
+        SKIP_BROWSER_VAL: c.skipBrowser ? 'true' : 'false',
+        ROI_JSON: JSON.stringify(c.roi || {}),
+        SESSION_JSON: JSON.stringify(c.session || {}),
+    };
+
+    const pattern = new RegExp('\\{\\{\\s*(' + Object.keys(replacements).join('|') + ')\\s*\\}\\}', 'g');
+    h = h.replace(pattern, (_, key) => {
+        const value = replacements[key] || '';
+        if (key.endsWith('_JSON')) return value.replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    });
     return h;
 }
 
-function openDashboard() {
-    if (state.dashboard) { state.dashboard.dispose(); state.dashboard = null; return; }
-    const panel = vscode.window.createWebviewPanel('gravDashboard', 'Grav \u2014 Dashboard', vscode.ViewColumn.One, { enableScripts: true });
-    state.dashboard = panel;
-    panel.onDidDispose(() => { state.dashboard = null; });
+// Validate the complete webview payload before the first configuration write.
+function validateSettings(d) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('Invalid settings');
+    for (const key of ['enabled', 'scrollOn', 'skipBrowser', 'skipTerminalAccept', 'dryRun']) {
+        if (typeof d[key] !== 'boolean') throw new Error('Invalid ' + key);
+    }
+    for (const [key, min, max] of [['approveMs', 200, 5000], ['scrollMs', 100, 5000], ['pauseMs', 1000, 60000]]) {
+        if (!Number.isInteger(d[key]) || d[key] < min || d[key] > max) throw new Error('Invalid ' + key);
+    }
+    for (const key of ['patterns', 'disabledPatterns']) {
+        if (!Array.isArray(d[key]) || d[key].length > 500 || d[key].some(p => typeof p !== 'string' || !p.trim() || p.length > 200 || /[\x00-\x1f]/.test(p))) {
+            throw new Error('Invalid ' + key);
+        }
+    }
+    if (!['safe', 'balanced', 'fast', 'custom'].includes(d.operationMode) || d.presetMode !== 'custom') throw new Error('Invalid preset mode');
+    if (d.operationMode !== 'custom') {
+        const preset = buildOperationPreset(d.operationMode);
+        const same = (a, b) => JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+        if (!same(d.patterns, preset.approvePatterns) || !same(d.disabledPatterns, preset.disabledPatterns) ||
+            d.enabled !== preset.enabled || d.scrollOn !== preset.autoScroll || d.skipBrowser !== preset.skipBrowserAgent ||
+            d.skipTerminalAccept !== preset.skipTerminalAccept || d.approveMs !== preset.approveIntervalMs || d.dryRun !== preset.dryRun) {
+            throw new Error('Settings do not match selected preset');
+        }
+    }
+    return d;
+}
 
-    const renderPanel = () => {
-        const dp = state.ctx.globalState.get('disabledPatterns', []);
-        const promoted = getPromotedCommands();
-        panel.webview.html = getDashboardHtml({
-            enabled: cfg('enabled', true),
-            scrollOn: cfg('autoScroll', true),
-            pauseMs: cfg('scrollPauseMs', 7000),
-            scrollMs: cfg('scrollIntervalMs', 500),
-            approveMs: cfg('approveIntervalMs', 1000),
-            patterns: cfg('approvePatterns', ['Run','Allow','Always Allow','Keep Waiting','Continue','Retry']),
-            disabledPatterns: dp,
-            language: cfg('language', 'vi'),
-            stats: state.stats,
-            totalClicks: state.totalClicks,
-            whiteCount: SAFE_TERMINAL_CMDS.length + state.userWhitelist.length,
-            blackCount: DEFAULT_BLACKLIST.length + state.userBlacklist.length,
-            learnCount: promoted.length,
-            learnEpoch: state.learnEpoch,
-            learnTracking: Object.keys(state.learnData).length,
-            learnPatterns: state.patternCache.length,
-            wikiPages: Object.keys(state.wiki.index).length,
-            wikiConcepts: Object.keys(state.wiki.concepts).length,
-            wikiContradictions: state.wiki.contradictions.filter(c => !c.resolved).length,
-            concepts: state.wiki.concepts,
-            wikiLog: (state.wiki.log || []).slice(-30),
-        });
-    };
-    renderPanel();
-
-    panel.webview.onDidReceiveMessage(async (msg) => {
+function setupMessageHandler() {
+    if (!_panel) return;
+    _panel.webview.onDidReceiveMessage(async (msg) => {
+        if (!msg || typeof msg.command !== 'string') return;
         const c = vscode.workspace.getConfiguration('grav');
+        const state = _deps.getState();
+
         switch (msg.command) {
-            case 'toggle':
-                state.enabled = msg.enabled;
-                await c.update('enabled', msg.enabled, vscode.ConfigurationTarget.Global);
-                writeRuntimeConfig(); refreshBar(); break;
-            case 'scrollToggle':
-                state.scrollOn = msg.enabled;
-                await c.update('autoScroll', msg.enabled, vscode.ConfigurationTarget.Global);
-                writeRuntimeConfig(); refreshBar(); break;
             case 'save': {
-                const d = msg.data;
-                await c.update('enabled', d.enabled, vscode.ConfigurationTarget.Global);
-                await c.update('autoScroll', d.scrollOn, vscode.ConfigurationTarget.Global);
-                await c.update('scrollPauseMs', d.pauseMs, vscode.ConfigurationTarget.Global);
-                await c.update('scrollIntervalMs', d.scrollMs, vscode.ConfigurationTarget.Global);
-                await c.update('approveIntervalMs', d.approveMs, vscode.ConfigurationTarget.Global);
-                await c.update('approvePatterns', d.patterns, vscode.ConfigurationTarget.Global);
-                await state.ctx.globalState.update('disabledPatterns', d.disabledPatterns);
-                state.enabled = d.enabled; state.scrollOn = d.scrollOn !== false;
-                state.patterns = d.patterns.filter(p => !d.disabledPatterns.includes(p));
-                writeRuntimeConfig(); refreshBar(); break;
+                try {
+                    const d = validateSettings(msg.data);
+                    await c.update('enabled', d.enabled, vscode.ConfigurationTarget.Global);
+                    await c.update('autoScroll', d.scrollOn, vscode.ConfigurationTarget.Global);
+                    await c.update('skipBrowserAgent', d.skipBrowser, vscode.ConfigurationTarget.Global);
+                    await c.update('skipTerminalAccept', d.skipTerminalAccept !== false, vscode.ConfigurationTarget.Global);
+                    await c.update('scrollPauseMs', d.pauseMs, vscode.ConfigurationTarget.Global);
+                    await c.update('scrollIntervalMs', d.scrollMs, vscode.ConfigurationTarget.Global);
+                    await c.update('approveIntervalMs', d.approveMs, vscode.ConfigurationTarget.Global);
+                    await c.update('approvePatterns', d.patterns, vscode.ConfigurationTarget.Global);
+                    await c.update('operationMode', d.operationMode, vscode.ConfigurationTarget.Global);
+                    await c.update('presetMode', 'custom', vscode.ConfigurationTarget.Global);
+                    await c.update('dryRun', d.dryRun, vscode.ConfigurationTarget.Global);
+                    await _ctx.globalState.update('disabledPatterns', d.disabledPatterns);
+                    _deps.setState({ enabled: d.enabled, scrollOn: d.scrollOn !== false });
+                    await _deps.onSave();
+                    pushRuntime();
+                    postMessage({ command: 'saveResult', success: true });
+                } catch (e) {
+                    postMessage({ command: 'saveResult', success: false, error: e.message || 'Save failed' });
+                }
+                break;
             }
-            case 'changeLang':
-                await c.update('language', msg.lang, vscode.ConfigurationTarget.Global);
-                renderPanel(); break;
             case 'reload':
                 vscode.commands.executeCommand('workbench.action.reloadWindow'); break;
             case 'resetStats':
-                state.stats = {}; state.totalClicks = 0;
-                state.ctx.globalState.update('stats', {}); state.ctx.globalState.update('totalClicks', 0);
-                panel.webview.postMessage({ command: 'statsUpdated', stats: {}, totalClicks: 0 }); break;
-            case 'clearLog':
-                state.log = []; state.ctx.globalState.update('clickLog', []);
-                panel.webview.postMessage({ command: 'logUpdated', log: [] }); break;
+            case 'clearLog': {
+                try {
+                    const resetting = msg.command === 'resetStats';
+                    await _deps.setState(resetting ? { stats: {}, totalClicks: 0 } : { log: [] });
+                    if (resetting) {
+                        await _ctx.globalState.update('stats', {});
+                        await _ctx.globalState.update('totalClicks', 0);
+                        const fresh = _deps.getState();
+                        postMessage({ command: 'statsUpdated', stats: fresh.stats, totalClicks: fresh.totalClicks });
+                    } else {
+                        await _ctx.globalState.update('clickLog', []);
+                        postMessage({ command: 'logUpdated', log: _deps.getState().log });
+                    }
+                    postMessage({ command: 'actionResult', action: msg.command, success: true });
+                } catch (e) {
+                    postMessage({ command: 'actionResult', action: msg.command, success: false, error: e.message });
+                }
+                break;
+            }
             case 'getLog':
-                panel.webview.postMessage({ command: 'logUpdated', log: state.log }); break;
+                postMessage({ command: 'logUpdated', log: state.log }); break;
             case 'getStats':
-                panel.webview.postMessage({ command: 'statsUpdated', stats: state.stats, totalClicks: state.totalClicks }); break;
+                postMessage({ command: 'statsUpdated', stats: state.stats, totalClicks: state.totalClicks }); break;
+            case 'scanSpeed': vscode.commands.executeCommand('grav.setScanSpeed'); break;
+            case 'configureAutopilot': vscode.commands.executeCommand('grav.configureAutopilot'); break;
+            case 'permissionProfile': vscode.commands.executeCommand('grav.permissionProfile'); break;
             case 'manageTerminal':
                 vscode.commands.executeCommand('grav.manageTerminal'); break;
-        }
-    }, undefined, state.ctx.subscriptions);
-
-    const ticker = setInterval(() => {
-        try { panel.webview.postMessage({ command: 'statsUpdated', stats: state.stats, totalClicks: state.totalClicks }); } catch (_) {}
-        try {
-            const msg = { command: 'brainUpdated' };
-            msg.epoch = state.learnEpoch || 0;
-            msg.tracking = Object.keys(state.learnData || {}).length;
-            msg.whiteCount = SAFE_TERMINAL_CMDS.length + (state.userWhitelist || []).length;
-            msg.blackCount = DEFAULT_BLACKLIST.length + (state.userBlacklist || []).length;
-            msg.promoted = getPromotedCommands().length;
-            msg.patterns = (state.patternCache || []).length;
-            msg.wikiPages = Object.keys((state.wiki && state.wiki.index) || {}).length;
-            msg.wikiConcepts = Object.keys((state.wiki && state.wiki.concepts) || {}).length;
-            msg.wikiContradictions = ((state.wiki && state.wiki.contradictions) || []).filter(function(c) { return !c.resolved; }).length;
-
-            var concepts = {};
-            if (state.wiki && state.wiki.concepts) {
-                for (var ck in state.wiki.concepts) {
-                    var cv = state.wiki.concepts[ck];
-                    concepts[ck] = { commands: (cv.commands || []).slice(0, 20), avgConfidence: cv.avgConfidence || 0, riskLevel: cv.riskLevel || 'unknown', description: cv.description || '' };
+            case 'feedback': {
+                // Feedback targets one trace row; the backend validates the ID and throws if it is missing or expired.
+                const traceId = typeof msg.traceId === 'string' ? msg.traceId.trim() : '';
+                const result = { command: 'feedbackResult', kind: msg.kind, traceId };
+                try {
+                    if (msg.kind !== 'falsePositive' && msg.kind !== 'falseNegative') throw new Error('Invalid feedback kind');
+                    if (!traceId || traceId.length > 100) throw new Error('Trace ID required');
+                    if (!_deps.recordFeedback) throw new Error('Feedback is unavailable');
+                    const reason = typeof msg.reason === 'string' && msg.reason ? msg.reason.slice(0, 200) : 'dashboard';
+                    await _deps.recordFeedback(msg.kind, { reason, traceId });
+                    result.success = true;
+                } catch (e) {
+                    result.success = false;
+                    result.error = e.message || 'Feedback failed';
                 }
+                if (_deps.getTraceSnapshot) postMessage({ command: 'traceUpdated', trace: _deps.getTraceSnapshot() });
+                postMessage(result);
+                break;
             }
-            msg.concepts = concepts;
-            msg.wikiLog = ((state.wiki && state.wiki.log) || []).slice(-15).map(function(l) {
-                return { time: l.time || '', op: l.op || '', cmd: l.cmd || '', action: l.action || '', conf: l.conf, detail: l.detail || '' };
-            });
-            panel.webview.postMessage(msg);
-        } catch (e) {
-            if (e.message && e.message.indexOf('disposed') >= 0) clearInterval(ticker);
+            case 'getTrace':
+                if (_deps.getTraceSnapshot) postMessage({ command: 'traceUpdated', trace: _deps.getTraceSnapshot() });
+                break;
+            case 'refreshObserver':
+                vscode.commands.executeCommand('grav.refreshObserver'); break;
+            case 'openDiagnostics':
+                vscode.commands.executeCommand('grav.diagnostics'); break;
+            case 'openExternal': {
+                // Footer link: only ever allow the pinned repository URL — the webview
+                // must not be able to open arbitrary external targets.
+                const url = typeof msg.url === 'string' ? msg.url : '';
+                if (url === 'https://github.com/anlvdt/grav' || url === 'https://github.com/anlvdt') {
+                    vscode.env.openExternal(vscode.Uri.parse(url));
+                }
+                break;
+            }
         }
-    }, 2500);
-    panel.onDidDispose(function() { clearInterval(ticker); });
+    }, undefined, _ctx.subscriptions);
 }
 
-module.exports = { openDashboard, getDashboardHtml };
+function startTickers() {
+    const learning = _deps.learning;
+    const wiki = _deps.wiki;
+
+    // Tier 1: Stats — 2.5s
+    _statsTicker = setInterval(() => {
+        if (!_panel || !_panel.visible) return; // Skip updates if tab is hidden to save CPU/IPC overhead
+        pushRuntime();
+        const state = _deps.getState();
+        const statsStr = JSON.stringify({ stats: state.stats, totalClicks: state.totalClicks });
+        if (statsStr !== _lastSentStatsState) {
+            _lastSentStatsState = statsStr;
+            postMessage({ command: 'statsUpdated', stats: state.stats, totalClicks: state.totalClicks });
+        }
+    }, 2500);
+
+    // Tier 2: Brain/Wiki — 5s
+    _brainTicker = setInterval(() => {
+        if (!_panel || !_panel.visible) return; // Skip updates if tab is hidden to save CPU/IPC overhead
+        try {
+            const state = _deps.getState();
+            const w = wiki.getWiki();
+
+            // Build current brain stats first to check if anything changed
+            const currentBrain = {
+                epoch: learning.getEpoch(),
+                tracking: Object.keys(learning.getData()).length,
+                whiteCount: SAFE_TERMINAL_CMDS.length + learning.getWhitelist().length,
+                blackCount: DEFAULT_BLACKLIST.length + learning.getBlacklist().length,
+                promoted: learning.getPromotedCommands().length,
+                patterns: learning.getPatternCache().length,
+                wikiPages: Object.keys(w.index).length,
+                wikiConcepts: Object.keys(w.concepts).length,
+                wikiContradictions: wiki.getContradictions().length,
+                roi: _deps.roi ? _deps.roi.getSummary() : null,
+                idle: _deps.idle ? _deps.idle.isIdle() : null,
+                session: _deps.getSessionSafe ? _deps.getSessionSafe() : null,
+            };
+
+            // Compare with last sent brain stats + trace + logs
+            const brainStr = JSON.stringify(currentBrain);
+            const traceSnapshot = _deps.getTraceSnapshot ? _deps.getTraceSnapshot() : null;
+            const traceStr = traceSnapshot ? JSON.stringify(traceSnapshot) : '';
+            const logsStr = JSON.stringify({
+                wikiLog: (w.log || []).slice(-30),
+                termLog: (state.termLog || []).slice(0, 30)
+            });
+
+            const combinedState = brainStr + traceStr + logsStr;
+            if (combinedState === _lastSentBrainState) {
+                return; // Zero diff — skip postMessage
+            }
+            _lastSentBrainState = combinedState;
+
+            // ── Build message only after diff gate ──
+            const msg = {
+                command: 'brainUpdated',
+                epoch: currentBrain.epoch,
+                tracking: currentBrain.tracking,
+                whiteCount: currentBrain.whiteCount,
+                blackCount: currentBrain.blackCount,
+                promoted: currentBrain.promoted,
+                patterns: currentBrain.patterns,
+                wikiPages: currentBrain.wikiPages,
+                wikiConcepts: currentBrain.wikiConcepts,
+                wikiContradictions: currentBrain.wikiContradictions,
+                terminalWhitelist: [...SAFE_TERMINAL_CMDS, ...learning.getWhitelist()],
+                terminalBlacklist: [...DEFAULT_BLACKLIST, ...learning.getBlacklist()],
+                session: currentBrain.session,
+            };
+
+            // Concept serialization (only on diff)
+            const concepts = {};
+            for (const ck in w.concepts) {
+                const cv = w.concepts[ck];
+                concepts[ck] = {
+                    commands: (cv.commands || []).slice(0, 20),
+                    avgConfidence: cv.avgConfidence || 0,
+                    riskLevel: cv.riskLevel || 'unknown',
+                    description: cv.description || '',
+                };
+            }
+            msg.concepts = concepts;
+            msg.wikiLog = (w.log || []).slice(-30).map(l => ({
+                time: l.time || '', op: l.op || '', cmd: l.cmd || '',
+                action: l.action || '', conf: l.conf, detail: l.detail || '',
+            }));
+            if (_deps.roi) msg.roi = currentBrain.roi;
+            if (_deps.idle) msg.idle = currentBrain.idle;
+            if (traceSnapshot) msg.trace = traceSnapshot;
+            msg.termLog = (state.termLog || []).slice(0, 30).map(t => ({
+                time: t.time || '', cmd: t.cmd || '', source: t.source || 'ui',
+            }));
+
+            postMessage(msg);
+        } catch (e) {
+            if (e.message && e.message.indexOf('disposed') >= 0) {
+                clearInterval(_brainTicker);
+            }
+        }
+    }, 5000);
+}
+
+module.exports = { toggle, getPanel, postMessage, render, buildHtml };

@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{NONCE}}'; img-src data:; font-src data:;">
+<title>Grav Dashboard</title>
+
+<style>
+:root {
+  --bg: var(--vscode-editor-background, #060a12);
+  --surface: var(--vscode-sideBar-background, #0f172a);
+  --card: var(--vscode-editorWidget-background, #0f172a);
+  --surface-hover: var(--vscode-list-hoverBackground, #243047);
+  --border: var(--vscode-panel-border, #475569);
+  --border-light: var(--vscode-focusBorder, #818cf8);
+  --focus: var(--vscode-focusBorder, #818cf8);
+  --text-primary: var(--vscode-foreground, #f1f5f9);
+  --text-secondary: var(--vscode-descriptionForeground, #94a3b8);
+  --text-muted: var(--vscode-descriptionForeground, #94a3b8);
+  --input-bg: var(--vscode-input-background, var(--surface));
+  --input-fg: var(--vscode-input-foreground, var(--text-primary));
+  --btn-bg: var(--vscode-button-background, #6366f1);
+  --btn-fg: var(--vscode-button-foreground, #fff);
+  --blue: var(--vscode-button-background, #6366f1);
+  --blue-light: var(--vscode-textLink-foreground, #818cf8);
+  --green: var(--vscode-charts-green, #10b981);
+  --yellow: var(--vscode-charts-yellow, #f59e0b);
+  --red: var(--vscode-errorForeground, #ef4444);
+  --purple: var(--vscode-charts-purple, #a78bfa);
+  --cyan: var(--vscode-charts-blue, #22d3ee);
+  /* Text-weight accent colors: bright accent fills stay on --green/--yellow/--red,
+     but small text needs a darker ink on light themes to hit WCAG AA. */
+  --green-ink: var(--vscode-charts-green, #10b981);
+  --yellow-ink: var(--vscode-charts-yellow, #f59e0b);
+  --red-ink: var(--vscode-errorForeground, #ef4444);
+  --blue-ink: var(--vscode-textLink-foreground, #818cf8);
+  /* Neutral tints read as a subtle overlay on both light and dark themes. */
+  --tint-1: rgba(128, 128, 128, 0.08);
+  --tint-2: rgba(128, 128, 128, 0.16);
+  --tint-3: rgba(128, 128, 128, 0.3);
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --transition: opacity 0.15s ease, transform 0.15s ease;
+  --transition-fast: opacity 0.15s ease, transform 0.15s ease;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.5; -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  padding-bottom: 40px;
+  position: relative;
+  text-wrap: pretty;
+}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--tint-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--tint-3); }
+
+.root { max-width: 960px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+/* ── Header ── */
+.hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px;
+  background: var(--surface);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  position: relative; overflow: hidden;
+}
+.hdr-brand { display: flex; align-items: center; gap: 14px; }
+.hdr-icon {
+  width: 42px; height: 42px; border-radius: var(--radius-md);
+  background: var(--btn-bg); color: var(--btn-fg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem; font-weight: 800; font-family: var(--font-display);
+}
+.hdr-info { display: flex; flex-direction: column; }
+.hdr-name {
+  font-family: var(--font-display); font-size: 1.1rem; font-weight: 800;
+  color: var(--text-primary); text-wrap: balance;
+}
+.hdr-ver { font-size: 0.75rem; color: var(--text-muted); }
+.hdr-r { display: flex; gap: 8px; }
+
+/* ── Tabs Navigation ── */
+.tabs-nav {
+  display: flex; gap: 4px;
+  background: var(--tint-1);
+  padding: 4px; border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+.tab-btn {
+  flex: 1; padding: 10px 16px; border-radius: var(--radius-sm);
+  border: none; background: transparent; color: var(--text-muted);
+  font-family: var(--font-display); font-weight: 600; font-size: 0.82rem;
+  cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  position: relative;
+}
+.tab-btn:hover { color: var(--text-secondary); background: var(--tint-1); }
+.tab-btn.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.tab-content { display: none; flex-direction: column; gap: 20px; }
+.tab-content.active { display: flex; }
+
+/* ── Status Badges ── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 20px;
+  font-size: 0.75rem; font-weight: 700;
+  background: var(--tint-1); border: 1px solid var(--border);
+}
+.status-badge.on { color: var(--green-ink); border-color: var(--green); background: transparent; }
+.status-badge.off { color: var(--text-muted); }
+.status-badge.warn { color: var(--yellow-ink); border-color: var(--yellow); background: transparent; }
+.status-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; position: relative; }
+
+/* ── Premium Cards ── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 20px;
+  position: relative;
+}
+.card-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.card-title {
+  font-family: var(--font-display); font-size: 0.85rem; font-weight: 700;
+  color: var(--text-secondary); display: flex; align-items: center; gap: 10px; text-wrap: balance;
+}
+.card-body { display: flex; flex-direction: column; gap: 16px; }
+/* Inline SVG icon sizing — stroke uses currentColor so icons follow theme ink. */
+.ic { width: 15px; height: 15px; flex-shrink: 0; display: inline-block; vertical-align: -2px; }
+.card-title .ic { color: var(--text-secondary); }
+.tab-btn .ic { width: 14px; height: 14px; }
+.trow-icon .ic { width: 14px; height: 14px; }
+.icon { display: inline-flex; align-items: center; }
+.toast-icon { display: inline-flex; align-items: center; }
+.toast-icon .ic { width: 14px; height: 14px; }
+.split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+.box {
+  background: rgba(0, 0, 0, 0.2); border-radius: var(--radius-md);
+  padding: 20px; border: 1px solid var(--border);
+  min-width: 0; overflow: hidden;
+}
+
+/* ── Metrics ── */
+.metric {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid var(--tint-1);
+}
+.metric:last-child { border-bottom: none; }
+.metric-label { font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.metric-value { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.metric-value.blue { color: var(--blue); }
+.metric-value.green { color: var(--green-ink); }
+.metric-value.yellow { color: var(--yellow); }
+.metric-value.cyan { color: var(--cyan); }
+.metric-value.purple { color: var(--purple); }
+
+/* ── Circular SVG Rings ── */
+.chart-container {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 10px;
+}
+.ring-wrap { position: relative; display: inline-flex; }
+.ring-label {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.ring-value { font-size: 1.4rem; font-weight: 800; color: var(--text-primary); line-height: 1; }
+.ring-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.progress-ring { transform: rotate(-90deg); }
+.ring-track { stroke: var(--tint-2); }
+
+/* ── Slider / Controls ── */
+.trow { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--tint-1); }
+.trow:last-child { border-bottom: none; }
+.trow-info { flex: 1; padding-right: 16px; }
+.trow-name { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.trow-desc { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+.trow-icon { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); font-size: 0.95rem; }
+.trow-icon.blue { background: rgba(59,130,246,0.12); color: var(--blue); }
+.trow-icon.green { background: rgba(16,185,129,0.12); color: var(--green-ink); }
+.trow-icon.yellow { background: rgba(245,158,11,0.12); color: var(--yellow-ink); }
+
+.tog { position: relative; width: 44px; height: 24px; cursor: pointer; flex-shrink: 0; }
+.tog input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.tog-track, .tog-thumb { pointer-events: none; }
+.tog-track { position: absolute; inset: 0; background: var(--tint-1); border-radius: 12px; border: 1px solid var(--border); transition: background-color 0.15s ease, border-color 0.15s ease; }
+.tog-thumb { position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; background: var(--text-muted); border-radius: 50%; transition: transform 0.15s ease, background-color 0.15s ease; }
+.tog input:focus-visible + .tog-track { outline: 2px solid var(--focus); outline-offset: 3px; }
+.tog input:checked + .tog-track { background: var(--btn-bg); border-color: var(--btn-bg); }
+.tog input:checked + .tog-track + .tog-thumb { transform: translateX(20px); background: var(--btn-fg); }
+
+.rng { display: flex; align-items: center; gap: 14px; padding: 12px 0; }
+.rng-lbl { font-size: 0.82rem; color: var(--text-secondary); min-width: 60px; font-weight: 500; }
+.rng input[type=range] { flex: 1; height: 5px; background: var(--tint-2); border-radius: 3px; -webkit-appearance: none; }
+.rng input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--text-primary); border-radius: 50%; cursor: pointer; }
+.rng-val { font-size: 0.82rem; color: var(--text-primary); min-width: 60px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ── Segmented Preset Selector ── */
+.seg { display: flex; gap: 8px; background: var(--tint-1); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.seg-btn {
+  flex: 1; padding: 8px 12px; border-radius: 6px; border: none;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  font-size: 0.8rem; font-weight: 600; font-family: var(--font-display); transition: background-color 0.15s ease, color 0.15s ease;
+}
+.seg-btn:hover { color: var(--text-primary); background: var(--tint-1); }
+.seg-btn.active {
+  color: var(--btn-fg); background: var(--btn-bg);
+}
+
+/* ── Dynamic Target Tags ── */
+.pgrid { display: flex; flex-wrap: wrap; gap: 8px; }
+.ptag {
+  font-size: 0.8rem; padding: 6px 14px; border-radius: 30px;
+  border: 1px solid var(--border); background: var(--tint-1); color: var(--text-secondary);
+  cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease; font-family: var(--font-sans); font-weight: 600;
+}
+.ptag:hover { background: var(--surface-hover); color: var(--text-primary); border-color: var(--tint-2); }
+.ptag.on { border-color: var(--green); color: var(--text-primary); background: var(--tint-1); }
+.ptag.off { border-style: dashed; color: var(--text-secondary); }
+.ptag-state { font-weight: 700; }
+
+/* ── Advanced Tables / Feeds with Filter/Search & Paging ── */
+.panel-ctrls { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; }
+.search-input {
+  padding: 6px 12px; background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.8rem;
+  font-family: var(--font-sans); width: 180px;
+}
+.search-input:focus { border-color: var(--focus); }
+.feed { max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.feed-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--tint-1); }
+.feed-row:last-child { border-bottom: none; }
+.feed-ts { font-size: 0.72rem; color: var(--text-muted); min-width: 50px; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.feed-badge { font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; font-family: var(--font-display); }
+.feed-badge.ingest { color: var(--blue); background: rgba(59,130,246,0.12); }
+.feed-badge.lint { color: var(--yellow); background: rgba(245,158,11,0.12); }
+.feed-badge.approve { color: var(--green-ink); background: rgba(16,185,129,0.12); }
+.feed-badge.reject, .feed-badge.block { color: var(--red); background: rgba(239,68,68,0.12); }
+.feed-cmd { font-size: 0.8rem; color: var(--text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.feed-conf { font-size: 0.75rem; color: var(--text-muted); min-width: 40px; text-align: right; }
+.feed-empty { font-size: 0.82rem; color: var(--text-muted); padding: 16px 0; text-align: center; }
+
+/* ── Pagination controls ── */
+.paging { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--tint-1); }
+.paging-btn {
+  padding: 4px 10px; font-size: 0.75rem; font-weight: 600; border-radius: 4px;
+  background: var(--tint-1); border: 1px solid var(--border); color: var(--text-secondary);
+  cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease;
+}
+.paging-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.paging-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.paging-info { font-size: 0.75rem; color: var(--text-muted); }
+
+/* ── Buttons & Selects ── */
+.qactions { display: flex; gap: 8px; flex-wrap: wrap; }
+.qbtn {
+  padding: 8px 16px; font-size: 0.8rem; font-weight: 600;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--tint-1); color: var(--text-primary); cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; font-family: var(--font-display);
+}
+.qbtn:hover { background: var(--surface-hover); border-color: var(--tint-2); }
+.qbtn.primary {
+  background: var(--btn-bg); color: var(--btn-fg); border-color: transparent;
+}
+.qbtn.primary:hover { opacity: 0.9; }
+.qbtn.danger { color: var(--red-ink); border-color: rgba(239,68,68,0.25); background: rgba(239,68,68,0.08); }
+.qbtn.danger:hover { background: rgba(239,68,68,0.15); }
+.qbtn.success { color: var(--green-ink); border-color: rgba(16,185,129,0.25); background: rgba(16,185,129,0.08); }
+.qbtn.success:hover { background: rgba(16,185,129,0.15); }
+.qbtn.warn { color: var(--yellow-ink); border-color: rgba(245,158,11,0.25); background: rgba(245,158,11,0.08); }
+.qbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Press feedback: instant, no transition — pointer-down must respond immediately. */
+.qbtn:active:not(:disabled), .ptag:active, .tab-btn:active,
+.seg-btn:active:not(:disabled), .paging-btn:active:not(:disabled),
+.confirm-yes:active, .confirm-no:active, .link-btn:active { transform: translateY(1px); }
+
+.sel {
+  padding: 6px 12px; font-size: 0.8rem; color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-family: var(--font-sans);
+}
+
+/* ── KPI Grid ── */
+.box-title {
+  font-family: var(--font-display); font-size: 0.75rem; font-weight: 700; margin-bottom: 12px;
+  color: var(--text-muted);
+}
+.kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.kpi {
+  padding: 14px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--tint-1);
+  text-align: center; position: relative; overflow: hidden;
+}
+.kpi-v {
+  display: block; font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums;
+  font-family: var(--font-display); color: var(--text-primary);
+}
+.kpi-k { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
+.concept-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+
+/* ── Diagnostics Notes ── */
+.diag-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.diag-note {
+  padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.15);
+}
+.diag-note-k { display: block; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; }
+.diag-note-v { display: block; font-size: 0.8rem; color: var(--text-secondary); word-break: break-all; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 100px; overflow-y: auto; font-family: var(--font-mono); }
+
+/* ── Activity / Stats bar custom visualizer ── */
+.bar-r { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.bar-k { width: 90px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.bar-bg { flex: 1; height: 4px; background: var(--tint-1); border-radius: 2px; overflow: hidden; }
+.bar-fg { height: 100%; background: var(--btn-bg); border-radius: 2px; }
+.bar-n { width: 35px; text-align: right; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 600; }
+
+/* ── Toast & Overlays ── */
+.toast {
+  position: fixed; bottom: 32px; left: 50%; transform: translate(-50%, 20px);
+  background: var(--text-primary); color: #000;
+  padding: 10px 20px; font-size: 0.85rem; font-weight: 600;
+  border-radius: 30px; opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none; z-index: 2; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  display: flex; align-items: center; gap: 10px;
+}
+.toast.show { transform: translate(-50%, 0); opacity: 1; }
+.toast.warn { background: var(--yellow); color: #000; }
+
+.confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 3; opacity: 0; pointer-events: none; }
+.confirm-overlay.show { opacity: 1; pointer-events: auto; }
+.confirm-box { background: #0c101b; border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 28px; text-align: center; width: 340px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+.confirm-box p { font-size: 0.95rem; margin-bottom: 24px; color: var(--text-secondary); }
+.confirm-btns { display: flex; gap: 10px; justify-content: center; }
+.confirm-btns button { padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--tint-1); color: var(--text-secondary); cursor: pointer; font-size: 0.85rem; font-family: var(--font-display); font-weight: 600; transition: background-color 0.15s ease, color 0.15s ease; }
+.confirm-btns .confirm-yes { border-color: rgba(239,68,68,0.3); color: var(--red); background: rgba(239,68,68,0.08); }
+.confirm-btns .confirm-yes:hover { background: rgba(239,68,68,0.15); }
+.confirm-btns .confirm-no:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* ── Footer ── */
+.foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-top: 12px; padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.save-state { font-size: 0.82rem; font-weight: 500; }
+.save-state.dirty { color: var(--yellow); }
+.save-state.clean { color: var(--text-muted); }
+.foot-actions { display: flex; gap: 8px; }
+
+/* ── Concept List custom UI ── */
+.cpt { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--tint-1); display: flex; flex-direction: column; gap: 6px; }
+.cpt-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cpt-name { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpt-risk { font-size: 0.75rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; font-family: var(--font-display); }
+.cpt-risk.safe { color: var(--green-ink); background: rgba(16,185,129,0.12); }
+.cpt-risk.caution { color: var(--yellow); background: rgba(245,158,11,0.12); }
+.cpt-risk.danger { color: var(--red); background: rgba(239,68,68,0.12); }
+.cpt-risk.unknown { color: var(--text-muted); background: var(--tint-1); }
+.cpt-bar { height: 4px; background: var(--tint-1); border-radius: 2px; overflow: hidden; }
+.cpt-fill { height: 100%; border-radius: 2px; }
+.cpt-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 0.75rem; color: var(--text-muted); }
+
+.typing { display: none; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px; }
+.typing.on { display: flex; }
+.typing-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--blue); animation: blink 1.4s ease infinite; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+
+.help-text { font-size: 0.75rem; color: var(--text-muted); }
+.card-hdr--flat { border-bottom: none; padding-bottom: 0; }
+.rule-hdr { font-size: 0.75rem; font-weight: 700; margin-bottom: 12px; }
+.rule-hdr.green { color: var(--green-ink); }
+.rule-hdr.red { color: var(--red-ink); }
+
+@media (max-width: 800px) {
+  .split-grid { grid-template-columns: 1fr; }
+  .hdr { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .tabs-nav { flex-wrap: wrap; }
+  .foot { flex-direction: column; align-items: flex-start; }
+}
+
+:root {
+  color-scheme: light dark;
+}
+.hdr-name, .kpi-v { background: none; color: var(--text-primary); }
+.box, .diag-note { background: var(--surface); }
+.search-input, .sel { background: var(--input-bg); color: var(--input-fg); }
+.rng input[type=range] { background: var(--vscode-scrollbarSlider-background, #64748b); }
+.rng input[type=range]::-webkit-slider-thumb { background: var(--text-primary); }
+.qbtn.primary, .seg-btn.active { background: var(--btn-bg); color: var(--btn-fg); }
+.toast { background: var(--vscode-notifications-background, var(--card)); color: var(--vscode-notifications-foreground, var(--text-primary)); }
+button:focus-visible, input:focus-visible, select:focus-visible, [role="tabpanel"]:focus-visible,
+.rng input[type=range]:focus-visible, .search-input:focus-visible, .sel:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+[hidden] { display: none !important; }
+dialog.confirm-overlay { display: none; width: 100%; height: 100%; max-width: none; max-height: none; border: 0; color: var(--text-primary); }
+dialog.confirm-overlay[open] { display: flex; opacity: 1; pointer-events: auto; }
+.confirm-box { background: var(--card); }
+body.vscode-high-contrast *, body.vscode-high-contrast-light * { border-color: var(--vscode-contrastBorder, currentColor); }
+body.vscode-high-contrast .qbtn.primary, body.vscode-high-contrast-light .qbtn.primary { border-color: var(--vscode-contrastBorder, currentColor); }
+/* Light/high-contrast-light: switch accent *text* to darker inks for WCAG AA.
+   Fills/borders still use the bright accent vars — only small text needs ink. */
+/* Light/high-contrast-light: switch accent *text* to darker inks for WCAG AA.
+   We intentionally do NOT read --vscode-charts-* here: those theme vars are
+   tuned for charts on dark backgrounds and can stay light-on-light. */
+body.vscode-light, body.vscode-high-contrast-light {
+  --green-ink: #15803d;
+  --yellow-ink: #a16207;
+  --red-ink: #b91c1c;
+  --blue-ink: #3b5ddb;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* ── Footer ── */
+.footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 16px 4px 4px;
+  border-top: 1px solid var(--border); margin-top: 4px;
+  font-size: 0.78rem; color: var(--text-muted);
+}
+.footer-left { display: flex; align-items: center; gap: 6px; }
+.footer-name { font-weight: 700; color: var(--text-secondary); font-family: var(--font-display); }
+.footer-sep { color: var(--border); }
+.footer-right { display: flex; align-items: center; gap: 8px; }
+.footer-link { color: var(--blue-ink); text-decoration: none; }
+.footer-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 4px 10px; font: inherit; color: var(--text-secondary);
+  cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease;
+}
+.footer-btn:hover { background: var(--tint-1); color: var(--text-primary); }
+.footer-star { color: var(--yellow-ink); }
+.footer-star:hover { color: var(--yellow-ink); border-color: rgba(245,158,11,0.35); }
+
+/* ── Runtime summary, decisions, trace detail ── */
+.hdr-r { align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.runtime-summary { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 100%; }
+.runtime-reason { font-size: 0.8rem; color: var(--text-primary); overflow-wrap: anywhere; text-align: right; }
+.runtime-meta { font-size: 0.72rem; color: var(--text-secondary); overflow-wrap: anywhere; text-align: right; }
+.status-badge.deny { color: var(--red-ink); border-color: var(--red); background: transparent; }
+.status-badge { flex-shrink: 0; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 0.8rem; }
+.kv > div { display: contents; }
+.kv dt { color: var(--text-secondary); font-weight: 600; }
+.kv dd { color: var(--text-primary); overflow-wrap: anywhere; font-family: var(--font-mono); }
+.link-btn { background: none; border: none; padding: 0; color: var(--blue-ink); cursor: pointer; font: inherit; text-decoration: underline; display: inline-flex; align-items: center; min-height: 24px; }
+.feed-badge.decision-allow { color: var(--green-ink); border: 1px solid var(--green); }
+.feed-badge.decision-manual { color: var(--yellow); border: 1px solid var(--yellow); }
+.feed-badge.decision-deny { color: var(--red); border: 1px solid var(--red); }
+.feed-badge.decision-unknown { color: var(--text-secondary); border: 1px dashed var(--border); }
+.trace-item { border-bottom: 1px solid var(--border); }
+.trace-item:last-child { border-bottom: none; }
+.trace-item .feed-row { border-bottom: none; }
+.trace-detail { padding: 4px 0 14px 8px; display: flex; flex-direction: column; gap: 10px; }
+.trace-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.qbtn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.feed:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.rng-lbl.long { min-width: 150px; }
+
+@media (max-width: 560px) {
+  .root { padding: 12px; gap: 14px; }
+  .hdr { padding: 14px; }
+  .runtime-summary, .runtime-reason, .runtime-meta { align-items: flex-start; text-align: left; }
+  .card { padding: 16px; }
+  .tab-btn { flex: 1 1 40%; padding: 8px; }
+  .trow { flex-wrap: wrap; gap: 8px; }
+  .rng { flex-wrap: wrap; gap: 6px 10px; }
+  .rng-lbl, .rng-lbl.long { min-width: 100%; }
+  .rng input[type=range] { min-width: 0; }
+  .card-hdr { flex-wrap: wrap; gap: 8px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .feed-row { flex-wrap: wrap; gap: 6px 8px; }
+  .feed-cmd { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .search-input, .search-input:focus { width: 100%; }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .kv dd { margin-bottom: 6px; }
+  .foot-actions { flex-wrap: wrap; }
+  .confirm-box { width: min(340px, 92vw); }
+}
+</style>
+</head>
+<body>
+<div class="root">
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-brand">
+      <div class="hdr-icon">G</div>
+      <div class="hdr-info">
+        <div class="hdr-name">Grav Dashboard</div>
+        <div class="hdr-ver">v{{VERSION}} — Autopilot for Antigravity</div>
+      </div>
+    </div>
+    <div class="hdr-r">
+      <div class="runtime-summary" id="runtimeSummary" role="status" aria-live="polite">
+        <span class="status-badge off" id="masterBadge"><span class="dot"></span>Runtime: Unknown</span>
+        <span class="runtime-reason" id="runtimeReason">No runtime snapshot yet</span>
+        <span class="runtime-meta" id="runtimeMeta">Workspace: unknown · Policy version: unknown</span>
+      </div>
+      <span class="status-badge" id="cdpBadge" style="display:none"><span class="dot"></span>CDP</span>
+    </div>
+  </div>
+
+  <!-- TAB SWITCHER -->
+  <div class="tabs-nav" role="tablist" aria-label="Dashboard sections">
+    <button class="tab-btn active" data-tab="dashboard"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Controls</button>
+    <button class="tab-btn" data-tab="rules"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Rules</button>
+    <button class="tab-btn" data-tab="analytics"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Analytics</button>
+    <button class="tab-btn" data-tab="diagnostics"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg> Diagnostics</button>
+  </div>
+
+  <!-- TAB: DASHBOARD -->
+  <div class="tab-content active" id="tab-dashboard">
+    <div class="card" id="decisionCard">
+      <div class="card-hdr card-hdr--flat">
+        <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span> Latest Decision</div>
+        <span class="status-badge off" id="decisionBadge">None</span>
+      </div>
+      <div class="card-body">
+        <dl class="kv">
+          <div><dt>Action</dt><dd id="decisionLabel">—</dd></div>
+          <div><dt>Reason</dt><dd id="decisionReason">No decision recorded yet</dd></div>
+          <div><dt>Matched rules</dt><dd id="decisionRules">—</dd></div>
+          <div><dt>Scope</dt><dd id="decisionScope">—</dd></div>
+          <div><dt>Outcome</dt><dd id="decisionOutcome">—</dd></div>
+        </dl>
+        <div class="help-text">A decision is the policy result. “Click attempted” means Grav tried the click; it does not confirm the command succeeded. <button type="button" class="link-btn" id="btnDecisionDetails">View trace details</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr card-hdr--flat">
+        <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Control Settings</div>
+        <span class="status-badge on" id="ctrlBadge">Saved config: On</span>
+      </div>
+      <div class="card-body">
+        <div class="help-text" id="pendingNote" hidden></div>
+        <div class="trow">
+          <div class="trow-info">
+            <div class="trow-name"><span class="trow-icon blue"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="7"/><line x1="12" y1="6" x2="12" y2="10"/></svg></span> Auto-Click</div>
+            <div class="trow-desc">Configuration only: the runtime status in the header shows whether clicking is actually ready</div>
+          </div>
+          <label class="tog" for="chkEnabled" id="labelEnabled">
+            <input type="checkbox" id="chkEnabled" role="switch" aria-label="Enable auto-click" {{ENABLED_CHK}}>
+            <div class="tog-track"></div><div class="tog-thumb"></div>
+          </label>
+        </div>
+        <div class="trow">
+          <div class="trow-info">
+            <div class="trow-name"><span class="trow-icon green"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="12 5 12 19"/><polyline points="6 13 12 19 18 13"/></svg></span> Auto-Scroll</div>
+            <div class="trow-desc">Keep chat scrolled to bottom</div>
+          </div>
+          <label class="tog" for="chkScroll" id="labelScroll">
+            <input type="checkbox" id="chkScroll" role="switch" aria-label="Enable auto-scroll" {{SCROLL_CHK}}>
+            <div class="tog-track"></div><div class="tog-thumb"></div>
+          </label>
+        </div>
+        <div class="trow">
+          <div class="trow-info">
+            <div class="trow-name"><span class="trow-icon yellow"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Skip Browser SubAgent</div>
+            <div class="trow-desc">Pause auto-click when browser subagent is active</div>
+          </div>
+          <label class="tog" for="chkSkipBrowser" id="labelSkipBrowser">
+            <input type="checkbox" id="chkSkipBrowser" role="switch" aria-label="Skip browser subagent" {{SKIP_BROWSER_CHK}}>
+            <div class="tog-track"></div><div class="tog-thumb"></div>
+          </label>
+        </div>
+        <div class="trow">
+          <div class="trow-info">
+            <div class="trow-name"><span class="trow-icon yellow"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Native Accept Guard</div>
+            <div class="trow-desc">Built-in capability, not configurable: native APIs accept known edits only; CDP verifies terminal/tool prompts</div>
+          </div>
+          <span class="status-badge on" id="guardBadge">Always on</span>
+        </div>
+
+        <div style="padding-top:12px">
+          <div class="rng"><span class="rng-lbl">Click</span><input type="range" id="rngApprove" min="200" max="5000" step="100" value="{{APPROVE_MS}}" aria-label="Approve interval"><span class="rng-val" id="valApprove">{{APPROVE_MS}}ms</span></div>
+          <div class="rng"><span class="rng-lbl">Scroll</span><input type="range" id="rngScroll" min="100" max="5000" step="100" value="{{SCROLL_MS}}" aria-label="Scroll interval"><span class="rng-val" id="valScroll">{{SCROLL_MS}}ms</span></div>
+          <div class="rng"><span class="rng-lbl long">Scroll pause after interaction</span><input type="range" id="rngPause" min="1000" max="60000" step="500" value="{{PAUSE_MS}}" aria-label="Scroll pause after interaction"><span class="rng-val" id="valPause">{{PAUSE_MS}}ms</span></div>
+        </div>
+
+        <div style="padding-top:16px; border-top: 1px solid var(--border)">
+          <div class="box-title">Operating Mode</div>
+          <div class="seg" id="presetBar"></div>
+          <div class="help-text" id="presetDesc" style="margin-top:8px">Preset controls will update the settings below before you save.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Targets -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span> Auto-Click Targets</div>
+        <span class="metric-value" id="statActive">0 active</span>
+      </div>
+      <div class="card-body">
+        <div class="pgrid" id="patGrid"></div>
+        <div class="help-text">Click a tag to toggle. On is active, Off is disabled. Changes apply on Save.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: RULES -->
+  <div class="tab-content" id="tab-rules">
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Terminal Rules Engine</div>
+        <button class="qbtn success" style="padding:4px 10px;font-size:.75rem" id="btnManageTerminal">Manage Rules</button>
+        <button class="qbtn success" type="button" id="btnConfigureAutopilot">Set up Autopilot</button>
+        <button class="qbtn" id="btnPermissionProfile">Permission profile</button>
+        <button class="qbtn" id="btnScanSpeed">Scan speed</button>
+      </div>
+      <div class="card-body"><details><summary>Effective scoped rules (first 30; Manage Rules for all)</summary><pre id="structuredRulesSummary" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details></div>
+      <div class="card-body split-grid">
+        <div class="box">
+          <div class="rule-hdr green">Legacy Grants (Legacy profile)</div>
+          <div class="pgrid" id="whitelistGrid" style="max-height:240px;overflow-y:auto"></div>
+        </div>
+        <div class="box">
+          <div class="rule-hdr red"><span class="icon" style="display:inline-flex;vertical-align:-3px;margin-right:4px"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Blacklist Rules</div>
+          <div class="pgrid" id="blacklistGrid" style="max-height:240px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: ANALYTICS -->
+  <div class="tab-content" id="tab-analytics">
+    <!-- Session and ROI Stats -->
+    <div class="split-grid">
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Session Statistics</div>
+          <span class="status-badge" id="healthBadge">—</span>
+        </div>
+        <div class="card-body">
+          <div class="typing" id="aiTyping"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span style="margin-left:4px">AI is thinking...</span></div>
+          <div class="metric"><span class="metric-label"><span class="icon">⏱</span> Uptime</span><span class="metric-value blue" id="sessDuration">0m</span></div>
+          <div class="metric"><span class="metric-label"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Messages</span><span class="metric-value" id="sessMsg">0</span></div>
+          <div class="metric"><span class="metric-label"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg></span> Click Attempts</span><span class="metric-value green" id="sessApprove">0</span></div>
+          <div class="metric"><span class="metric-label"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Avg Response</span><span class="metric-value" id="sessAvgResp">—</span></div>
+          <div class="metric"><span class="metric-label"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span> Idle</span><span class="metric-value" id="idleStatus">—</span></div>
+        </div>
+      </div>
+
+      <div class="card" style="align-items:stretch">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5v.3a3.5 3.5 0 0 0-1.6 6.5A3.5 3.5 0 0 0 6 18a2.5 2.5 0 0 0 5 0V4.5A2.5 2.5 0 0 0 9.5 2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5v.3a3.5 3.5 0 0 1 1.6 6.5A3.5 3.5 0 0 1 18 18a2.5 2.5 0 0 1-5 0V4.5A2.5 2.5 0 0 1 14.5 2z"/></svg></span> Learning Brain</div>
+        </div>
+        <div class="card-body">
+          <div class="kpi-grid">
+            <div class="kpi"><span class="kpi-v" id="brainEpoch">{{LEARN_EPOCH}}</span><span class="kpi-k">Epoch</span></div>
+            <div class="kpi"><span class="kpi-v" id="brainTracking">{{LEARN_TRACKING}}</span><span class="kpi-k">Tracking</span></div>
+            <div class="kpi"><span class="kpi-v" id="brainPromoted">{{LEARN_COUNT}}</span><span class="kpi-k">Candidates</span></div>
+            <div class="kpi"><span class="kpi-v" id="brainPatterns">{{LEARN_PATTERNS}}</span><span class="kpi-k">Patterns</span></div>
+            <div class="kpi"><span class="kpi-v" id="brainWhite">{{WHITE_COUNT}}</span><span class="kpi-k">Whitelist</span></div>
+            <div class="kpi"><span class="kpi-v" id="brainBlack">{{BLACK_COUNT}}</span><span class="kpi-k">Blacklist</span></div>
+          </div>
+          <div class="help-text">Candidates are commands suggested by observed history. A suggestion score is a heuristic, not an approval.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="split-grid">
+      <!-- Click stats with interactive SVG Progress Ring -->
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Click Distribution</div>
+        </div>
+        <div class="card-body split-grid" style="align-items: center">
+          <div class="chart-container">
+            <div class="ring-wrap">
+              <svg aria-hidden="true" class="progress-ring" width="140" height="140">
+                <circle class="ring-track" stroke-width="10" fill="transparent" r="58" cx="70" cy="70"/>
+                <circle id="successRing" stroke="var(--green)" stroke-width="10" fill="transparent" r="58" cx="70" cy="70" stroke-linecap="round" style="stroke-dasharray: 364.42; stroke-dashoffset: 364.42;"/>
+              </svg>
+              <div class="ring-label">
+                <span class="ring-value" id="successRate">—</span>
+                <span class="ring-sub">top 5 share</span>
+              </div>
+            </div>
+          </div>
+          <div class="box">
+            <div style="font-size:0.75rem;font-weight:700;margin-bottom:8px;color:var(--text-secondary);text-transform:uppercase">TOP PATTERNS (<span class="blue" id="statTotal">{{TOTAL}}</span> click attempts)</div>
+            <div id="statBars"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROI -->
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span> Estimated Time Saved (ROI)</div>
+        </div>
+        <div class="card-body">
+            <div class="help-text" id="roiNote">Estimate only: assumes a fixed time saved per click attempt (about 1–8 s depending on the button). The daily figure extrapolates this session to 8 hours. Productivity is not measured.</div>
+            <div class="metric"><span class="metric-label">Est. Session Saved</span><span class="metric-value green" id="roiSaved">0s</span></div>
+            <div class="metric"><span class="metric-label">Session Click Attempts</span><span class="metric-value blue" id="roiClicks">0</span></div>
+            <div class="metric"><span class="metric-label">Est. Daily (extrapolated)</span><span class="metric-value" id="roiDaily">0s</span></div>
+            <div class="metric"><span class="metric-label">Est. Time-Saved Ratio</span><span class="metric-value" id="roiGain">0%</span></div>
+            <div class="metric"><span class="metric-label">Est. Lifetime Saved</span><span class="metric-value green" id="roiLifeSaved">0m</span></div>
+            <div class="metric"><span class="metric-label">Lifetime Click Attempts</span><span class="metric-value" id="roiLifeClicks">0</span></div>
+            <div class="metric"><span class="metric-label">Lifetime Sessions</span><span class="metric-value" id="roiLifeSessions">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="split-grid">
+      <!-- Tool breakdown & Knowledge Map -->
+      <div class="card" id="toolBreakdownCard">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span> Tool Usage</div>
+        </div>
+        <div class="card-body" id="toolBreakdown"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Knowledge Map</div>
+        </div>
+        <div class="card-body compact">
+          <div class="kpi-grid" style="margin-bottom:12px">
+            <div class="kpi"><span class="kpi-v" id="wikiPages">{{WIKI_PAGES}}</span><span class="kpi-k">Pages</span></div>
+            <div class="kpi"><span class="kpi-v" id="wikiConcepts">{{WIKI_CONCEPTS}}</span><span class="kpi-k">Concepts</span></div>
+            <div class="kpi"><span class="kpi-v" id="wikiContradictions">{{WIKI_CONTRADICTIONS}}</span><span class="kpi-k">Issues</span></div>
+          </div>
+          <div class="concept-list" id="conceptMap"><div class="feed-empty">No learned concepts yet</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: DIAGNOSTICS -->
+  <div class="tab-content" id="tab-diagnostics">
+    <div class="card"><div class="card-body"><details><summary>Adapter capabilities</summary><pre id="capabilitySummary" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details><details><summary>Learning evidence and examples</summary><pre id="learningEvidence" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details><details><summary>Pilot metrics (clicks are attempts)</summary><pre id="pilotSummary" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details></div></div>
+    <div class="split-grid">
+      <!-- Runtime Diagnostics -->
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Runtime Diagnostics</div>
+          <div class="qactions">
+            <button class="qbtn success" id="btnDiagnostics">Open Suite</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="kpi-grid" style="margin-bottom:12px">
+            <div class="kpi"><span class="kpi-v" id="diagMode">custom</span><span class="kpi-k">Mode</span></div>
+            <div class="kpi"><span class="kpi-v" id="diagNativeAccept">0/0</span><span class="kpi-k">Native Guard</span></div>
+            <div class="kpi"><span class="kpi-v" id="diagFeedback">0 / 0</span><span class="kpi-k">FP / FN</span></div>
+          </div>
+          <div class="diag-stack">
+            <div class="diag-note">
+              <span class="diag-note-k">Runtime Status</span>
+              <span class="diag-note-v" id="diagRuntime">Unknown</span>
+            </div>
+            <div class="diag-note">
+              <span class="diag-note-k">Workspace / Policy Version</span>
+              <span class="diag-note-v" id="diagScope">Workspace: unknown&#10;Policy version: unknown</span>
+            </div>
+            <div class="diag-note">
+              <span class="diag-note-k">Last Blocked Action</span>
+              <span class="diag-note-v" id="diagLastBlocked">None</span>
+            </div>
+            <div class="diag-note">
+              <span class="diag-note-k">Filtered Native Commands</span>
+              <span class="diag-note-v" id="diagFiltered">None</span>
+            </div>
+            <div class="diag-note">
+              <span class="diag-note-k">Safety Flags</span>
+              <span class="diag-note-v" id="diagFlags">skipBrowserAgent: false, skipTerminalAccept: true</span>
+            </div>
+          </div>
+          <div class="help-text" style="margin-top:12px">To report a false positive or missed click, open Details on the exact Decision Trace event. Feedback is sent with that event's trace ID.</div>
+        </div>
+      </div>
+
+      <!-- Decision Trace -->
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span> Decision Trace <span style="font-weight:400;font-size:.75rem;color:var(--text-muted);text-transform:none;letter-spacing:0" id="traceMeta"></span></div>
+          <div class="qactions">
+            <button class="qbtn" id="btnRefreshTrace">Refresh</button>
+            <button class="qbtn" id="btnRefreshObserver">Observer</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="panel-ctrls">
+            <select class="sel" id="selTraceFilter" aria-label="Filter trace">
+              <option value="all">All Events</option>
+              <option value="clicked">Clicks</option>
+              <option value="blocked">Blocked</option>
+              <option value="filtered">Filtered</option>
+              <option value="feedback">Feedback</option>
+            </select>
+            <input type="text" class="search-input" id="searchTrace" aria-label="Search trace" placeholder="Search trace...">
+          </div>
+          <div class="feed" id="traceFeed" tabindex="0" role="region" aria-label="Decision trace events"><div class="feed-empty">No trace events yet</div></div>
+          <div class="paging" id="tracePaging">
+            <button class="paging-btn" id="btnTracePrev" disabled>Prev</button>
+            <span class="paging-info" id="tracePagingInfo">Page 1 of 1</span>
+            <button class="paging-btn" id="btnTraceNext" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title"><span class="icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Activity Log</div>
+        <div class="qactions">
+          <select class="sel" id="selLogFilter" aria-label="Filter activity log">
+            <option value="all">All Logs</option>
+            <option value="approve">Approve</option>
+            <option value="block">Blocked</option>
+            <option value="ingest">Ingest</option>
+            <option value="lint">Lint</option>
+          </select>
+          <input type="text" class="search-input" id="searchLog" aria-label="Search activity log" placeholder="Search logs...">
+          <button class="qbtn" id="btnRefreshLog">Refresh</button>
+          <button class="qbtn danger" id="btnClearLog">Clear</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="feed" id="logFeed" tabindex="0" role="region" aria-label="Activity log entries"><div class="feed-empty">No activity yet</div></div>
+        <div class="paging" id="logPaging">
+          <button class="paging-btn" id="btnLogPrev" disabled>Prev</button>
+          <span class="paging-info" id="logPagingInfo">Page 1 of 1</span>
+          <button class="paging-btn" id="btnLogNext" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER ACTIONS -->
+  <div class="foot">
+    <p class="ctrl-desc">Changes stay local until you click Save Changes. Language selection (grav.language) is deprecated; the dashboard supports English only.</p>
+    <div class="save-state clean" id="saveState" aria-live="polite">All changes saved</div>
+    <div class="foot-actions">
+      <button class="qbtn primary" id="btnSave" disabled>Save Changes</button>
+      <button class="qbtn success" id="btnReloadWindow">Reload Window</button>
+      <button class="qbtn danger" id="btnResetStats">Reset Stats</button>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-left">
+      <span class="footer-name">Grav</span>
+      <span class="footer-sep">·</span>
+      <span class="footer-author">by <button class="footer-link footer-btn" id="linkAuthor" type="button" data-url="https://github.com/anlvdt">An Le</button></span>
+    </div>
+    <div class="footer-right">
+      <button class="footer-link footer-btn" id="linkGithub" type="button">
+        <svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.72-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12v3.14c0 .3.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+        GitHub
+      </button>
+      <button class="footer-link footer-btn footer-star" id="linkStar" type="button">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Star on GitHub
+      </button>
+    </div>
+  </footer>
+
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="toast-icon" id="toastIconCheck" hidden><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span class="toast-icon" id="toastIconX" hidden><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span id="toastMsg">Saved</span></div>
+<dialog class="confirm-overlay" id="confirmOverlay" aria-labelledby="confirmMsg"><div class="confirm-box"><p id="confirmMsg">Are you sure?</p><div class="confirm-btns"><button class="confirm-no" id="confirmNo">Cancel</button><button class="confirm-yes" id="confirmYes">Confirm</button></div></div></dialog>
+
+<script nonce="{{NONCE}}">
+const vscode = acquireVsCodeApi();
+const $ = id => document.getElementById(id);
+
+/* SVG icon set — stroke="currentColor" so every icon follows the theme ink.
+   24x24 viewBox, stroke-width 2, linecap/linejoin round. aria-hidden via .ic svg. */
+const ICONS = {
+  bolt: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  shield: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  chart: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  compass: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+  gear: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  mouse: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="7"/><line x1="12" y1="6" x2="12" y2="10"/></svg>',
+  globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+  target: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+  msg: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  cursor: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg>',
+  moon: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  brain: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5v.3a3.5 3.5 0 0 0-1.6 6.5A3.5 3.5 0 0 0 6 18a2.5 2.5 0 0 0 5 0V4.5A2.5 2.5 0 0 0 9.5 2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5v.3a3.5 3.5 0 0 1 1.6 6.5A3.5 3.5 0 0 1 18 18a2.5 2.5 0 0 1-5 0V4.5A2.5 2.5 0 0 1 14.5 2z"/></svg>',
+  trend: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+  tool: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  doc: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>',
+  x: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  scroll: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="12 5 12 19"/><polyline points="6 13 12 19 18 13"/></svg>',
+  star: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+  github: '<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.72-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12v3.14c0 .3.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>',
+};
+const icon = n => ICONS[n] || '';
+
+function clearNode(node) {
+    while (node && node.firstChild) node.removeChild(node.firstChild);
+}
+
+function makeEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = String(text);
+    return el;
+}
+
+const _traceBadgeMap = { blocked: 'block', falseNegative: 'block', clicked: 'approve', 'native-accept': 'approve', filtered: 'lint' };
+function getTraceBadge(action) { return _traceBadgeMap[action] || 'ingest'; }
+
+// Host contract: getState().runtime and decision trace entries. Unrecognised values degrade to 'unknown'.
+const RUNTIME_LABELS = { off: 'Off', paused: 'Paused', 'dry-run': 'Dry run', disconnected: 'Disconnected', ready: 'Ready', unknown: 'Unknown' };
+const RUNTIME_BADGE = { off: 'off', paused: 'warn', 'dry-run': 'warn', disconnected: 'warn', ready: 'on', unknown: 'off' };
+const DECISION_LABELS = { allow: 'Allow', manual: 'Manual', deny: 'Deny', unknown: 'Unknown' };
+const DECISION_BADGE = { allow: 'on', manual: 'warn', deny: 'deny', unknown: 'off' };
+const OUTCOME_LABELS = { attempted: 'Click attempted (result not verified)', unknown: 'Outcome unknown' };
+const hasKey = (map, key) => Object.prototype.hasOwnProperty.call(map, key);
+
+function textOf(value) {
+    if (value === undefined || value === null) return '';
+    if (Array.isArray(value)) return value.map(textOf).filter(Boolean).join(', ');
+    if (typeof value === 'object') return textOf(value.id || value.name || value.label || '');
+    return String(value).trim();
+}
+
+// Engine decisions carry structured rules ({type,source,pattern,argv}) and scopes
+// ({type,source,argvPrefix,broad} or {type:'ui-action',label}); strings are accepted too.
+function scalar(value) {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value).trim().slice(0, 200) : '';
+}
+
+function scalarList(value) {
+    return Array.isArray(value) ? value.slice(0, 20).map(scalar).filter(Boolean) : [];
+}
+
+function labelled(pairs) {
+    return pairs.filter(pair => pair[1]).map(pair => pair[0] + ': ' + pair[1]).join(' · ');
+}
+
+function formatRule(rule) {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return scalar(rule);
+    const pattern = scalar(rule.pattern);
+    const meta = labelled([['type', scalar(rule.type)], ['source', scalar(rule.source)], ['argv', scalarList(rule.argv).join(' ')]]);
+    return pattern && meta ? pattern + ' — ' + meta : (pattern || meta);
+}
+
+function formatScope(scope) {
+    if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return scalar(scope);
+    if (scope.type === 'ui-action') return scope.label ? 'ui-action: ' + scalar(scope.label) : 'ui-action';
+    const head = scalar(scope.type);
+    const broad = typeof scope.broad === 'boolean' ? (scope.broad ? 'yes' : 'no') : '';
+    const rest = labelled([['source', scalar(scope.source)], ['prefix', scalarList(scope.argvPrefix).join(' ')], ['broad', broad]]);
+    return head && rest ? head + ' · ' + rest : (head || rest);
+}
+
+function joinReason(reason, code) {
+    return reason && code ? reason + ' (' + code + ')' : (reason || code || '');
+}
+
+function normalizeRuntime(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    return {
+        status: hasKey(RUNTIME_LABELS, r.status) ? r.status : 'unknown',
+        reasonCode: textOf(r.reasonCode),
+        reason: textOf(r.reason),
+        workspace: textOf(r.workspace),
+        policyVersion: textOf(r.policyVersion),
+    };
+}
+
+function normalizeTraceEntry(raw, index) {
+    const e = raw && typeof raw === 'object' ? raw : {};
+    const rules = (Array.isArray(e.matchedRules) ? e.matchedRules : [e.matchedRules]).slice(0, 20).map(formatRule).filter(Boolean);
+    const entry = {
+        index,
+        id: textOf(e.id),
+        time: textOf(e.time),
+        action: textOf(e.action),
+        source: textOf(e.source),
+        label: textOf(e.label || e.cmd || e.tool || e.reason),
+        decision: hasKey(DECISION_LABELS, e.decision) ? e.decision : 'unknown',
+        hasDecision: ['decision', 'reasonCode', 'matchedRules', 'scope', 'policyVersion', 'outcome'].some(k => e[k] !== undefined),
+        outcome: e.outcome === 'attempted' ? 'attempted' : 'unknown',
+        reasonCode: textOf(e.reasonCode),
+        reason: textOf(e.reason),
+        rules,
+        scope: formatScope(e.scope),
+        policyVersion: textOf(e.policyVersion),
+    };
+    entry.key = entry.id || ('row-' + index);
+    entry.search = [entry.id, entry.label, entry.action, entry.source, entry.reason, entry.reasonCode, rules.join(' '), entry.scope].join(' ').toLowerCase();
+    return entry;
+}
+
+function traceEntries() {
+    return (_traceState && Array.isArray(_traceState.trace) ? _traceState.trace : []).map(normalizeTraceEntry);
+}
+
+function restoreFocus(container, key) {
+    const el = key && Array.from(container.querySelectorAll('[data-focus-key]')).find(n => n.dataset.focusKey === key);
+    if (el) el.focus();
+}
+
+let _patterns = {{PATTERNS_JSON}};
+let _disabled = {{DISABLED_JSON}};
+let _stats = {{STATS_JSON}};
+let _allPatterns = {{ALL_PATTERNS_JSON}};
+let _patternGroups = {{PATTERN_GROUPS_JSON}};
+let _concepts = {{CONCEPTS_JSON}};
+let _wikiLog = {{WIKI_LOG_JSON}};
+let _totalClicks = {{TOTAL}};
+let _terminalWhitelist = {{TERMINAL_WHITELIST_JSON}};
+let _terminalBlacklist = {{TERMINAL_BLACKLIST_JSON}};
+let _traceState = {{TRACE_JSON}};
+let _operationPresets = {{OPERATION_PRESETS_JSON}};
+let _operationPresetConfigs = {{OPERATION_PRESET_CONFIGS_JSON}};
+let _operationMode = {{OPERATION_MODE_JSON}};
+let _roiState = {{ROI_JSON}};
+let _sessionState = {{SESSION_JSON}};
+let _savedSnapshot = '';
+let _pendingSave = null;
+let _dryRun = {{DRYRUN_VAL}};
+// Legacy flag kept only so saved payloads still match named presets; the guard itself is not configurable.
+let _skipTerminalAccept = {{SKIP_TERMINAL_VAL}};
+// Last runtime snapshot from the extension host; null until one arrives.
+let _runtimeState = {{RUNTIME_JSON}};
+let _expandedTrace = '';
+const _feedbackState = {};
+
+// Paging states
+let _tracePage = 1;
+const _pageSize = 8;
+let _logPage = 1;
+
+// Roving focus and automatic activation for the dashboard tabs.
+const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+function activateTab(btn) {
+    tabs.forEach(b => {
+        const active = b === btn;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', String(active));
+        b.tabIndex = active ? 0 : -1;
+        const panel = $('tab-' + b.dataset.tab);
+        panel.classList.toggle('active', active);
+        panel.hidden = !active;
+    });
+}
+tabs.forEach((btn, index) => {
+    btn.id = 'tabButton-' + btn.dataset.tab;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-controls', 'tab-' + btn.dataset.tab);
+    const panel = $('tab-' + btn.dataset.tab);
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', btn.id);
+    panel.tabIndex = 0;
+    btn.addEventListener('click', () => activateTab(btn));
+    btn.addEventListener('keydown', event => {
+        let next;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+        if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+        if (event.key === 'Home') next = 0;
+        if (event.key === 'End') next = tabs.length - 1;
+        if (next === undefined) return;
+        event.preventDefault();
+        activateTab(tabs[next]);
+        tabs[next].focus();
+    });
+});
+activateTab(tabs[0]);
+
+// Footer links — openExternal goes through the host so only the pinned repo URL is allowed.
+function bindExternalLink(id, url) {
+    const el = $(id);
+    if (el) el.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url }));
+}
+bindExternalLink('linkGithub', 'https://github.com/anlvdt/grav');
+bindExternalLink('linkStar', 'https://github.com/anlvdt/grav');
+{
+    const author = $('linkAuthor');
+    if (author) author.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://github.com/anlvdt' }));
+}
+function showToast(msg, ok, type) {
+    if (_toastTimer) clearTimeout(_toastTimer);
+    const t = $('toast');
+    $('toastMsg').textContent = msg;
+    $('toastIconCheck').hidden = ok === false;
+    $('toastIconX').hidden = ok !== false;
+    const resolvedType = type || (ok === false ? 'warn' : 'success');
+    t.className = 'toast ' + resolvedType + ' show';
+    _toastTimer = setTimeout(() => { t.className = 'toast'; _toastTimer = null; }, 3500);
+}
+
+let _confirmCb = null;
+let _confirmTrigger = null;
+function confirmAction(msg, cb, yesLabel) {
+    _confirmTrigger = document.activeElement;
+    $('confirmMsg').textContent = msg;
+    $('confirmYes').textContent = yesLabel || 'Confirm';
+    _confirmCb = cb;
+    $('confirmOverlay').showModal();
+    $('confirmNo').focus();
+}
+function closeConfirm() {
+    _confirmCb = null;
+    $('confirmOverlay').close();
+}
+$('confirmYes').addEventListener('click', () => {
+    const cb = _confirmCb;
+    closeConfirm();
+    if (cb) cb();
+});
+$('confirmOverlay').addEventListener('close', () => {
+    _confirmCb = null;
+    if (_confirmTrigger?.isConnected) _confirmTrigger.focus();
+    _confirmTrigger = null;
+});
+
+function currentSettingsSnapshot() {
+    return JSON.stringify({
+        enabled: !!$('chkEnabled')?.checked,
+        scrollOn: !!$('chkScroll')?.checked,
+        skipBrowser: !!$('chkSkipBrowser')?.checked,
+        skipTerminalAccept: _skipTerminalAccept,
+        approveMs: $('rngApprove')?.value || '',
+        scrollMs: $('rngScroll')?.value || '',
+        pauseMs: $('rngPause')?.value || '',
+        patterns: (_patterns || []).slice().sort(),
+        disabledPatterns: (_disabled || []).slice().sort(),
+        operationMode: _operationMode || 'custom',
+        presetMode: 'custom',
+        dryRun: _dryRun,
+    });
+}
+
+function syncSavedStateBadges(snapshot) {
+    let enabled = $('chkEnabled').checked;
+    if (snapshot) {
+        try { enabled = JSON.parse(snapshot).enabled === true; } catch (_err) { /* keep live toggle value */ }
+    }
+    // Saved configuration only; the header badge shows the runtime snapshot instead.
+    $('ctrlBadge').className = 'status-badge ' + (enabled ? 'on' : 'off');
+    $('ctrlBadge').textContent = 'Saved config: ' + (enabled ? 'On' : 'Off');
+}
+
+function renderRuntime() {
+    const hasSnapshot = !!_runtimeState && typeof _runtimeState === 'object';
+    const r = normalizeRuntime(_runtimeState);
+    const badge = $('masterBadge');
+    badge.className = 'status-badge ' + RUNTIME_BADGE[r.status];
+    clearNode(badge);
+    badge.appendChild(makeEl('span', 'dot'));
+    badge.appendChild(document.createTextNode('Runtime: ' + RUNTIME_LABELS[r.status]));
+    const reason = joinReason(r.reason, r.reasonCode);
+    const workspace = r.workspace || 'unknown';
+    const policy = r.policyVersion || 'unknown';
+    $('runtimeReason').textContent = reason || (hasSnapshot ? 'No reason reported' : 'No runtime snapshot yet');
+    $('runtimeMeta').textContent = 'Workspace: ' + workspace + ' · Policy version: ' + policy;
+    $('diagRuntime').textContent = RUNTIME_LABELS[r.status] + (reason ? '\n' + reason : '');
+    $('diagScope').textContent = 'Workspace: ' + workspace + '\nPolicy version: ' + policy;
+}
+
+function renderLatestDecision() {
+    const entry = traceEntries().find(e => e.hasDecision);
+    const badge = $('decisionBadge');
+    badge.className = 'status-badge ' + (entry ? DECISION_BADGE[entry.decision] : 'off');
+    badge.textContent = entry ? 'Decision: ' + DECISION_LABELS[entry.decision] : 'None';
+    $('decisionLabel').textContent = entry ? (entry.label || entry.id || 'Not reported') : '—';
+    $('decisionReason').textContent = entry ? (joinReason(entry.reason, entry.reasonCode) || 'Not reported') : 'No decision recorded yet';
+    $('decisionRules').textContent = entry ? (entry.rules.join(', ') || 'None reported') : '—';
+    $('decisionScope').textContent = entry ? (entry.scope || 'Not reported') : '—';
+    $('decisionOutcome').textContent = entry ? OUTCOME_LABELS[entry.outcome] : '—';
+}
+
+function showLatestDecisionDetails() {
+    activateTab(tabs.find(b => b.dataset.tab === 'diagnostics'));
+    const entry = traceEntries().find(e => e.hasDecision);
+    if (!entry) return;
+    $('selTraceFilter').value = 'all';
+    $('searchTrace').value = '';
+    _tracePage = Math.floor(entry.index / _pageSize) + 1;
+    _expandedTrace = entry.key;
+    renderTrace();
+    restoreFocus($('traceFeed'), 'detail:' + entry.key);
+}
+
+function updateDirtyState(reason) {
+    const dirty = currentSettingsSnapshot() !== _savedSnapshot;
+    const saveState = $('saveState');
+    const saveBtn = $('btnSave');
+    if (saveState) {
+        saveState.className = 'save-state ' + (dirty ? 'dirty' : 'clean');
+        saveState.textContent = dirty ? (reason || 'Unsaved changes') : 'All changes saved';
+    }
+    if (saveBtn) saveBtn.disabled = !!_pendingSave || !dirty;
+    const note = $('pendingNote');
+    if (note) {
+        note.hidden = !(dirty || _pendingSave);
+        note.textContent = _pendingSave
+            ? 'Saving… The runtime status above stays unchanged until the extension reports it.'
+            : 'Unsaved changes are not applied yet. The runtime status above does not include these edits.';
+    }
+    return dirty;
+}
+
+function markDirty(reason) {
+    // A manual edit leaves the named operation preset, including its safety flags.
+    _operationMode = 'custom';
+    renderOperationPresets();
+    updateDirtyState(reason || 'Unsaved changes');
+}
+
+function getOperationPresetConfig(mode) {
+    return (_operationPresetConfigs || []).find((preset) => preset && preset.operationMode === mode) || null;
+}
+
+function renderOperationPresets() {
+    const bar = $('presetBar');
+    const desc = $('presetDesc');
+    if (!bar) return;
+    clearNode(bar);
+    for (const preset of (_operationPresets || [])) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'seg-btn' + (_operationMode === preset.id ? ' active' : '');
+        btn.textContent = preset.label;
+        btn.setAttribute('aria-pressed', String(_operationMode === preset.id));
+        btn.addEventListener('click', () => applyLocalPreset(preset.id));
+        bar.appendChild(btn);
+    }
+    if (desc) {
+        const active = (_operationPresets || []).find((preset) => preset.id === _operationMode);
+        desc.textContent = active
+            ? active.description
+            : 'Custom mode keeps your current mix of settings.';
+    }
+}
+
+function applyLocalPreset(mode) {
+    const preset = getOperationPresetConfig(mode);
+    if (!preset) return;
+    $('chkEnabled').checked = preset.enabled !== false;
+    $('chkScroll').checked = preset.autoScroll !== false;
+    $('chkSkipBrowser').checked = !!preset.skipBrowserAgent;
+    _skipTerminalAccept = preset.skipTerminalAccept !== false;
+    $('rngApprove').value = String(preset.approveIntervalMs || 1000);
+    $('valApprove').textContent = $('rngApprove').value + 'ms';
+    _patterns = (preset.approvePatterns || []).slice();
+    _disabled = (preset.disabledPatterns || []).slice();
+    _operationMode = mode;
+    _dryRun = !!preset.dryRun;
+    renderPatterns();
+    renderOperationPresets();
+    updateDirtyState((preset.label || mode) + ' preset ready to save');
+}
+
+function renderPatterns() {
+    const g = $('patGrid');
+    if (!g) return;
+    clearNode(g);
+    for (const p of _allPatterns) {
+        const variants = _patternGroups[p] || [p];
+        const enabled = variants.some(v => _patterns.includes(v) && !_disabled.includes(v));
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ptag ' + (enabled ? 'on' : 'off');
+        btn.appendChild(makeEl('span', 'ptag-label', p));
+        btn.appendChild(makeEl('span', 'ptag-state', enabled ? 'On' : 'Off'));
+        btn.setAttribute('aria-pressed', String(enabled));
+        btn.addEventListener('click', () => {
+            const wasOn = btn.classList.contains('on');
+            if (wasOn) {
+                for (const v of variants) { if (!_disabled.includes(v)) _disabled.push(v); }
+            } else {
+                _disabled = _disabled.filter(d => !variants.includes(d));
+                for (const v of variants) { if (!_patterns.includes(v)) _patterns.push(v); }
+            }
+            renderPatterns();
+            markDirty('Target list changed');
+        });
+        g.appendChild(btn);
+    }
+}
+
+function renderStats() {
+    const container = $('statBars');
+    if (!container) return;
+    clearNode(container);
+    const allEntries = Object.entries(_stats || {}).filter(([, count]) => Number.isFinite(count) && count > 0);
+    const entries = allEntries.sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const max = entries.length > 0 ? entries[0][1] : 1;
+    let total = 0;
+    for (const [k, v] of entries) {
+        total += v;
+        const pct = Math.round((v / max) * 100);
+        const row = makeEl('div', 'bar-r');
+        const key = makeEl('span', 'bar-k', k);
+        key.title = k;
+        const bg = makeEl('div', 'bar-bg');
+        const fg = makeEl('div', 'bar-fg');
+        fg.style.width = pct + '%';
+        bg.appendChild(fg);
+        const count = makeEl('span', 'bar-n', v);
+        row.appendChild(key);
+        row.appendChild(bg);
+        row.appendChild(count);
+        container.appendChild(row);
+    }
+    $('statTotal').textContent = String(_totalClicks || 0);
+    $('statActive').textContent = String(allEntries.length) + ' active';
+
+    // SVG animated ring update
+    const successRate = total > 0 ? Math.min(100, Math.round((total / (_totalClicks || 1)) * 100)) : 0;
+    $('successRate').textContent = successRate + '%';
+    const ring = $('successRing');
+    if (ring) {
+        const radius = ring.r.baseVal.value;
+        const circumference = 2 * Math.PI * radius;
+        const offset = circumference - (successRate / 100) * circumference;
+        ring.style.strokeDasharray = `${circumference} ${circumference}`;
+        ring.style.strokeDashoffset = offset;
+    }
+}
+
+function renderConcepts() {
+    const cm = $('conceptMap');
+    if (!cm) return;
+    clearNode(cm);
+    const entries = Object.entries(_concepts || {}).slice(0, 8);
+    if (entries.length === 0) {
+        cm.appendChild(makeEl('div', 'feed-empty', 'No learned concepts yet'));
+        return;
+    }
+    for (const [ck, cv] of entries) {
+        const el = makeEl('div', 'cpt');
+        const conf = Math.round((cv.avgConfidence || 0) * 100);
+        const risk = cv.riskLevel || 'unknown';
+        const top = makeEl('div', 'cpt-top');
+        const name = makeEl('span', 'cpt-name', ck);
+        name.title = ck;
+        const riskEl = makeEl('span', 'cpt-risk ' + risk, risk);
+        top.appendChild(name);
+        top.appendChild(riskEl);
+
+        const bar = makeEl('div', 'cpt-bar');
+        const fill = makeEl('div', 'cpt-fill');
+        fill.style.width = conf + '%';
+        fill.style.background = 'var(--' + (risk === 'safe' ? 'green' : risk === 'danger' ? 'red' : 'yellow') + ')';
+        bar.appendChild(fill);
+
+        const meta = makeEl('div', 'cpt-meta');
+        const commands = makeEl('span', '', (cv.commands || []).slice(0, 3).join(', '));
+        commands.title = (cv.commands || []).join(', ');
+        const confidence = makeEl('span', '', 'Suggestion score ' + conf + '%');
+        meta.appendChild(commands);
+        meta.appendChild(confidence);
+
+        el.appendChild(top);
+        el.appendChild(bar);
+        el.appendChild(meta);
+        cm.appendChild(el);
+    }
+}
+
+function renderToolBreakdown(toolBreakdown) {
+    const tb = $('toolBreakdown');
+    if (!tb) return;
+    clearNode(tb);
+    const entries = Object.entries(toolBreakdown || {}).slice(0, 6);
+    if (entries.length === 0) {
+        tb.appendChild(makeEl('div', 'feed-empty', 'No tool activity yet'));
+        return;
+    }
+    for (const [tool, data] of entries) {
+        const avg = data.count > 0 ? Math.round(data.totalMs / data.count) : 0;
+        const div = makeEl('div', 'metric');
+        div.style.padding = '4px 0';
+        const label = makeEl('span', 'metric-label', tool);
+        const value = makeEl('span', 'metric-value', data.count + '× ~' + avg + 'ms');
+        div.appendChild(label);
+        div.appendChild(value);
+        tb.appendChild(div);
+    }
+}
+
+// Logs Search & Paging
+function resetLogPaging() { _logPage = 1; }
+function changeLogPage(dir) {
+    _logPage += dir;
+    renderWikiLog();
+}
+function renderWikiLog() {
+    const feed = $('logFeed');
+    if (!feed) return;
+    const selected = $('selLogFilter') ? $('selLogFilter').value : 'all';
+    const query = ($('searchLog') ? $('searchLog').value : '').toLowerCase().trim();
+
+    const filtered = (_wikiLog || []).slice().reverse().filter((entry) => {
+        // filter by type
+        if (selected !== 'all') {
+            const op = String(entry.op || '').toLowerCase();
+            if (selected === 'block') {
+                if (!op.includes('block') && !op.includes('reject')) return false;
+            } else if (!op.includes(selected)) {
+                return false;
+            }
+        }
+        // filter by search query
+        if (query) {
+            const cmd = String(entry.cmd || '').toLowerCase();
+            const op = String(entry.op || '').toLowerCase();
+            if (!cmd.includes(query) && !op.includes(query)) return false;
+        }
+        return true;
+    });
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / _pageSize));
+    if (_logPage > totalPages) _logPage = totalPages;
+
+    $('btnLogPrev').disabled = _logPage === 1;
+    $('btnLogNext').disabled = _logPage === totalPages;
+    $('logPagingInfo').textContent = `Page ${_logPage} of ${totalPages} (${filtered.length} logs)`;
+
+    if (filtered.length === 0) {
+        feed.innerHTML = '<div class="feed-empty">No activity found</div>';
+        return;
+    }
+
+    clearNode(feed);
+    const start = (_logPage - 1) * _pageSize;
+    const paginated = filtered.slice(start, start + _pageSize);
+
+    for (const l of paginated) {
+        const row = makeEl('div', 'feed-row');
+        const op = (l.op || '').toLowerCase();
+        const badgeClass = op.includes('approve') ? 'approve' : op.includes('reject') ? 'reject' : op.includes('block') ? 'block' : op.includes('ingest') ? 'ingest' : 'lint';
+        row.appendChild(makeEl('span', 'feed-ts', l.time || ''));
+        row.appendChild(makeEl('span', 'feed-badge ' + badgeClass, l.op || ''));
+        row.appendChild(makeEl('span', 'feed-cmd', l.cmd || ''));
+        const score = makeEl('span', 'feed-conf', l.conf !== undefined ? 'Score ' + String(Math.round(l.conf * 100)) + '%' : '');
+        if (l.conf !== undefined) score.title = 'Suggestion score';
+        row.appendChild(score);
+        feed.appendChild(row);
+    }
+}
+
+function renderTerminalRules() {
+    const wg = $('whitelistGrid');
+    const bg = $('blacklistGrid');
+    if (wg) {
+        clearNode(wg);
+        if ((_terminalWhitelist || []).length === 0) {
+            wg.appendChild(makeEl('div', 'feed-empty', 'No whitelist entries'));
+        }
+        for (const w of (_terminalWhitelist || [])) {
+            wg.appendChild(makeEl('div', 'ptag on', w));
+        }
+    }
+    if (bg) {
+        clearNode(bg);
+        if ((_terminalBlacklist || []).length === 0) {
+            bg.appendChild(makeEl('div', 'feed-empty', 'No blacklist entries'));
+        }
+        for (const b of (_terminalBlacklist || [])) {
+            const el = makeEl('div', 'ptag', b);
+            el.style.borderColor = 'rgba(239,68,68,0.3)';
+            el.style.color = 'var(--red)';
+            el.style.background = 'rgba(239,68,68,0.05)';
+            bg.appendChild(el);
+        }
+    }
+}
+
+// Trace Search & Paging
+function resetTracePaging() { _tracePage = 1; }
+function changeTracePage(dir) {
+    _tracePage += dir;
+    renderTrace();
+}
+
+function buildTraceDetail(entry, detailId) {
+    const detail = makeEl('div', 'trace-detail');
+    detail.id = detailId;
+    const dl = makeEl('dl', 'kv');
+    const add = (key, value) => {
+        const wrap = makeEl('div');
+        wrap.appendChild(makeEl('dt', '', key));
+        wrap.appendChild(makeEl('dd', '', value || 'Not reported'));
+        dl.appendChild(wrap);
+    };
+    add('Trace ID', entry.id || 'Not provided');
+    add('Time', entry.time);
+    add('Source', entry.source);
+    add('Action', entry.action);
+    add('Decision', entry.hasDecision ? DECISION_LABELS[entry.decision] : '');
+    add('Reason code', entry.reasonCode);
+    add('Reason', entry.reason);
+    add('Matched rules', entry.rules.join(', ') || (entry.hasDecision ? 'None reported' : ''));
+    add('Scope', entry.scope);
+    add('Policy version', entry.policyVersion);
+    add('Outcome', entry.hasDecision ? OUTCOME_LABELS[entry.outcome] : '');
+    detail.appendChild(dl);
+    if (entry.source === 'feedback') return detail;
+
+    const fb = _feedbackState[entry.id];
+    const sending = !!fb && fb.status === 'sending';
+    const actions = makeEl('div', 'trace-actions');
+    for (const [kind, label, tone] of [['falsePositive', 'Report false positive', 'warn'], ['falseNegative', 'Report missed click', 'danger']]) {
+        const btn = makeEl('button', 'qbtn ' + tone, label);
+        btn.type = 'button';
+        btn.setAttribute('aria-label', label + ' for ' + (entry.id || 'this event'));
+        if (!entry.id || sending) btn.setAttribute('aria-disabled', 'true');
+        btn.dataset.focusKey = 'fb:' + kind + ':' + entry.key;
+        btn.addEventListener('click', () => {
+            if (btn.getAttribute('aria-disabled') === 'true') return;
+            sendFeedback(kind, entry.id);
+        });
+        actions.appendChild(btn);
+    }
+    let status = '';
+    if (!entry.id) status = 'Feedback needs a trace ID, and this event has none.';
+    else if (sending) status = 'Sending feedback…';
+    else if (fb && fb.status === 'ok') status = 'Feedback recorded: ' + (fb.kind === 'falseNegative' ? 'missed click' : 'false positive') + '.';
+    else if (fb && fb.status === 'error') status = 'Feedback failed: ' + fb.error;
+    if (status) actions.appendChild(makeEl('span', 'help-text', status));
+    detail.appendChild(actions);
+    return detail;
+}
+
+function buildTraceItem(entry) {
+    const item = makeEl('div', 'trace-item');
+    const row = makeEl('div', 'feed-row');
+    row.appendChild(makeEl('span', 'feed-ts', entry.time));
+    row.appendChild(makeEl('span', 'feed-badge ' + getTraceBadge(entry.action), entry.action || entry.source));
+    if (entry.hasDecision) row.appendChild(makeEl('span', 'feed-badge decision-' + entry.decision, 'Decision: ' + DECISION_LABELS[entry.decision]));
+    row.appendChild(makeEl('span', 'feed-cmd', entry.label));
+    row.appendChild(makeEl('span', 'feed-conf', entry.source));
+    const open = _expandedTrace === entry.key;
+    const detailId = 'traceDetail-' + entry.index;
+    const toggle = makeEl('button', 'paging-btn', open ? 'Hide details' : 'Details');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) toggle.setAttribute('aria-controls', detailId);
+    toggle.setAttribute('aria-label', (open ? 'Hide details for ' : 'Details for ') + (entry.id || entry.label || 'trace event'));
+    toggle.dataset.focusKey = 'detail:' + entry.key;
+    toggle.addEventListener('click', () => {
+        _expandedTrace = open ? '' : entry.key;
+        renderTrace();
+        restoreFocus($('traceFeed'), 'detail:' + entry.key);
+    });
+    row.appendChild(toggle);
+    item.appendChild(row);
+    if (open) item.appendChild(buildTraceDetail(entry, detailId));
+    return item;
+}
+
+function renderTrace() {
+    const traceFeed = $('traceFeed');
+    if (!traceFeed) return;
+    const selected = $('selTraceFilter') ? $('selTraceFilter').value : 'all';
+    const query = ($('searchTrace') ? $('searchTrace').value : '').toLowerCase().trim();
+
+    const filtered = traceEntries().filter((entry) => {
+        // filter by type
+        if (selected !== 'all') {
+            if (selected === 'feedback') {
+                if (entry.source !== 'feedback') return false;
+            } else if (entry.action !== selected) {
+                return false;
+            }
+        }
+        // filter by search query
+        return !query || entry.search.includes(query);
+    });
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / _pageSize));
+    if (_tracePage > totalPages) _tracePage = totalPages;
+
+    $('btnTracePrev').disabled = _tracePage === 1;
+    $('btnTraceNext').disabled = _tracePage === totalPages;
+    $('tracePagingInfo').textContent = `Page ${_tracePage} of ${totalPages}`;
+
+    if ($('traceMeta')) $('traceMeta').textContent = filtered.length + ' event' + (filtered.length === 1 ? '' : 's');
+    if (filtered.length === 0) {
+        traceFeed.innerHTML = '<div class="feed-empty">No trace events found</div>';
+        return;
+    }
+
+    // Rebuilding the rows would drop keyboard focus, so remember the focused control.
+    const focusKey = traceFeed.contains(document.activeElement) ? document.activeElement.dataset.focusKey : '';
+    clearNode(traceFeed);
+    const start = (_tracePage - 1) * _pageSize;
+    for (const entry of filtered.slice(start, start + _pageSize)) traceFeed.appendChild(buildTraceItem(entry));
+    restoreFocus(traceFeed, focusKey);
+}
+
+function renderTraceDiagnostics() {
+    if ($('structuredRulesSummary')) $('structuredRulesSummary').textContent = JSON.stringify((_traceState || {}).permissionRules || [], null, 2);
+    if ($('learningEvidence')) $('learningEvidence').textContent = JSON.stringify((_traceState || {}).learningEvidence || [], null, 2);
+    if ($('btnPermissionProfile')) $('btnPermissionProfile').textContent = 'Permission profile: ' + ((_traceState || {}).permissionProfile || 'legacy');
+    if ($('capabilitySummary')) $('capabilitySummary').textContent = JSON.stringify(Object.assign({}, (_traceState || {}).capabilities || {status:'Unknown'}, {executors: (_traceState || {}).executors || []}), null, 2);
+    if ($('pilotSummary')) $('pilotSummary').textContent = JSON.stringify(Object.assign({}, (_traceState || {}).metrics || {status:'No labeled opportunities yet'}, {latestReconnectRecoveryMs: (_traceState || {}).reconnectRecoveryMs ?? null, jobMetrics: (_traceState || {}).jobMetrics || null}), null, 2);
+    renderLatestDecision();
+    const state = _traceState || {};
+    const feedback = state.feedback || {};
+    if ($('diagMode')) $('diagMode').textContent = state.operationMode || _operationMode || 'custom';
+    if ($('diagNativeAccept')) $('diagNativeAccept').textContent = String(state.allowedNativeCount || 0) + '/' + String(state.totalNativeCount || 0);
+    if ($('diagFeedback')) $('diagFeedback').textContent = String(feedback.falsePositive || 0) + ' / ' + String(feedback.falseNegative || 0);
+    if ($('diagLastBlocked')) {
+        const lastBlocked = state.lastBlocked;
+        $('diagLastBlocked').textContent = lastBlocked
+            ? ((lastBlocked.cmd || lastBlocked.label || 'blocked') + (lastBlocked.reason ? ' — ' + lastBlocked.reason : ''))
+            : 'None';
+    }
+    if ($('diagFiltered')) $('diagFiltered').textContent = (state.filteredCommands || []).length ? state.filteredCommands.join(', ') : 'None';
+    if ($('diagFlags')) $('diagFlags').textContent = 'skipBrowserAgent: ' + String(!!state.skipBrowserAgent) + ', skipTerminalAccept: ' + String(state.skipTerminalAccept !== false);
+}
+
+function refreshTrace() {
+    vscode.postMessage({ command: 'getTrace' });
+}
+
+// Feedback always targets one trace row; the host replies with feedbackResult.
+function sendFeedback(kind, traceId) {
+    if (!traceId) return;
+    _feedbackState[traceId] = { status: 'sending', kind };
+    vscode.postMessage({ command: 'feedback', kind, traceId, reason: 'dashboard feedback' });
+    setTimeout(() => {
+        const fb = _feedbackState[traceId];
+        if (fb && fb.status === 'sending') {
+            _feedbackState[traceId] = { status: 'error', kind, error: 'no response from the extension' };
+            renderTrace();
+        }
+    }, 10000);
+    renderTrace();
+}
+
+function save() {
+    if (_pendingSave) return;
+    const d = {
+        enabled: $('chkEnabled').checked,
+        scrollOn: $('chkScroll').checked,
+        skipBrowser: $('chkSkipBrowser').checked,
+        skipTerminalAccept: _skipTerminalAccept,
+        pauseMs: parseInt($('rngPause').value, 10) || 7000,
+        scrollMs: parseInt($('rngScroll').value, 10) || 500,
+        approveMs: parseInt($('rngApprove').value, 10) || 1000,
+        patterns: _patterns,
+        disabledPatterns: _disabled,
+        operationMode: _operationMode || 'custom',
+        presetMode: 'custom',
+        dryRun: _dryRun,
+    };
+    _pendingSave = currentSettingsSnapshot();
+    vscode.postMessage({ command: 'save', data: d });
+    updateDirtyState('Saving changes…');
+    var btn = $('btnSave');
+    if (btn) { btn.textContent = 'Saving...'; btn.disabled = true; }
+}
+
+function resetStats() {
+    confirmAction('Reset click statistics? This cannot be undone.', function() {
+        vscode.postMessage({ command: 'resetStats' });
+
+    }, 'Reset stats');
+}
+
+function clearLog() {
+    confirmAction('Clear activity log?', function() {
+        vscode.postMessage({ command: 'clearLog' });
+
+    }, 'Clear log');
+}
+
+function getLog() {
+    vscode.postMessage({ command: 'getLog' });
+}
+
+function formatDuration(ms) {
+    if (!ms || ms < 1000) return '0s';
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    if (h > 0) return h + 'h ' + (m % 60) + 'm';
+    if (m > 0) return m + 'm ' + (s % 60) + 's';
+    return s + 's';
+}
+
+function formatNumber(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+}
+
+function updateRoiUI(r) {
+    if (!r) return;
+    const session = r.session || {};
+    const lifetime = r.lifetime || {};
+    if ($('roiSaved')) $('roiSaved').textContent = formatDuration((session.savedSec || 0) * 1000);
+    if ($('roiClicks')) $('roiClicks').textContent = String(session.clicks || 0);
+    if ($('roiGain')) $('roiGain').textContent = (session.gainPct || 0) + '%';
+    if ($('roiDaily')) $('roiDaily').textContent = formatDuration((session.dailySavedMin * 60 || 0) * 1000);
+    if ($('roiLifeSaved')) $('roiLifeSaved').textContent = formatDuration((lifetime.savedSec || 0) * 1000);
+    if ($('roiLifeClicks')) $('roiLifeClicks').textContent = formatNumber(lifetime.totalClicks || 0);
+    if ($('roiLifeSessions')) $('roiLifeSessions').textContent = String(lifetime.sessions || 0);
+}
+
+function updateSessionUI(s) {
+    if (!s) return;
+    if ($('sessDuration')) $('sessDuration').textContent = formatDuration(s.sessionMs || 0);
+    if ($('sessMsg')) $('sessMsg').textContent = String(s.msgCount || 0);
+    if ($('sessApprove')) $('sessApprove').textContent = String(s.approveCount || 0);
+    if ($('sessAvgResp')) $('sessAvgResp').textContent = s.avgResponseMs ? String(s.avgResponseMs) + 'ms' : '—';
+    if ($('aiTyping')) $('aiTyping').classList.toggle('on', !!s.aiTyping);
+    if ($('idleStatus')) $('idleStatus').textContent = s.idle ? 'Idle' : 'Active';
+    const hb = $('healthBadge');
+    if (hb) {
+        const health = s.learningHealth || 'unknown';
+        hb.className = 'status-badge ' + (health === 'healthy' ? 'on' : health === 'degrading' ? 'warn' : '');
+        hb.textContent = health === 'healthy' ? 'Healthy' : health === 'degrading' ? 'Degraded' : health === 'learning' ? 'Learning' : health === 'new' ? 'New' : '—';
+    }
+    renderToolBreakdown(s.toolBreakdown);
+    if (s.roi) updateRoiUI(s.roi);
+    if (s.cdpConnected !== undefined) {
+        const cdpBadge = $('cdpBadge');
+        if (cdpBadge) {
+            cdpBadge.style.display = 'inline-flex';
+            cdpBadge.className = 'status-badge ' + (s.cdpConnected ? 'on' : 'off');
+            clearNode(cdpBadge);
+            cdpBadge.appendChild(makeEl('span', 'dot'));
+            cdpBadge.appendChild(document.createTextNode('CDP ' + (s.cdpConnected ? String(s.cdpSessions || 0) : 'off')));
+        }
+    }
+}
+
+window.addEventListener('message', e => {
+    const m = e.data;
+    switch (m.command) {
+        case 'statsUpdated':
+            _stats = m.stats || {};
+            _totalClicks = m.totalClicks || 0;
+            renderStats();
+            break;
+        case 'logUpdated':
+            _wikiLog = m.log || [];
+            renderWikiLog();
+            break;
+        case 'brainUpdated':
+            const b = m;
+            if ($('brainEpoch')) $('brainEpoch').textContent = String(b.epoch || 0);
+            if ($('brainTracking')) $('brainTracking').textContent = String(b.tracking || 0);
+            if ($('brainWhite')) $('brainWhite').textContent = String(b.whiteCount || 0);
+            if ($('brainBlack')) $('brainBlack').textContent = String(b.blackCount || 0);
+            if ($('brainPromoted')) $('brainPromoted').textContent = String(b.promoted || 0);
+            if ($('brainPatterns')) $('brainPatterns').textContent = String(b.patterns || 0);
+            if ($('wikiPages')) $('wikiPages').textContent = String(b.wikiPages || 0);
+            if ($('wikiConcepts')) $('wikiConcepts').textContent = String(b.wikiConcepts || 0);
+            if ($('wikiContradictions')) $('wikiContradictions').textContent = String(b.wikiContradictions || 0);
+            if (b.concepts) { _concepts = b.concepts; renderConcepts(); }
+            if (b.wikiLog) { _wikiLog = b.wikiLog; renderWikiLog(); }
+            if (b.terminalWhitelist) { _terminalWhitelist = b.terminalWhitelist; }
+            if (b.terminalBlacklist) { _terminalBlacklist = b.terminalBlacklist; }
+            if (b.trace) { _traceState = b.trace; renderTrace(); renderTraceDiagnostics(); }
+            if (b.roi) updateRoiUI(b.roi);
+            if (b.session) updateSessionUI(b.session);
+            renderTerminalRules();
+            break;
+        case 'sessionUpdated':
+            updateSessionUI(m.session);
+            break;
+        case 'commandBlocked':
+            showToast('Blocked: ' + (m.reason || ''), '⊘', 'warn');
+            break;
+        case 'idleChanged':
+            if ($('idleStatus')) $('idleStatus').textContent = m.idle ? 'Idle' : 'Active';
+            break;
+        case 'saveResult': {
+            if (!_pendingSave) break;
+            const submitted = _pendingSave;
+            _pendingSave = null;
+            if (m.success) {
+                _savedSnapshot = submitted;
+                syncSavedStateBadges(submitted);
+                showToast('Settings saved successfully', true);
+            } else {
+                showToast('Save failed: ' + (m.error || 'unknown'), false, 'warn');
+            }
+            $('btnSave').textContent = 'Save Changes';
+            updateDirtyState();
+            break;
+        }
+        case 'actionResult':
+            showToast(m.success ? (m.action === 'resetStats' ? 'Stats reset' : 'Log cleared') : 'Action failed: ' + (m.error || 'unknown'), m.success);
+            break;
+        case 'traceUpdated':
+            _traceState = m.trace || {};
+            renderTrace();
+            renderTraceDiagnostics();
+            break;
+        case 'runtimeUpdated':
+            _runtimeState = m.runtime ?? null;
+            renderRuntime();
+            break;
+        case 'feedbackResult':
+            if (m.traceId) _feedbackState[m.traceId] = m.success ? { status: 'ok', kind: m.kind } : { status: 'error', kind: m.kind, error: m.error || 'unknown' };
+            showToast(m.success ? 'Feedback recorded for ' + m.traceId : 'Feedback failed: ' + (m.error || 'unknown'), m.success);
+            renderTrace();
+            break;
+    }
+});
+
+
+// Bind controls inside the nonce-authorized script; event attributes are forbidden by CSP.
+$('labelEnabled').addEventListener('click', function(event) { event.stopPropagation(); });
+$('chkEnabled').addEventListener('change', function(event) { markDirty(); });
+$('labelScroll').addEventListener('click', function(event) { event.stopPropagation(); });
+$('chkScroll').addEventListener('change', function(event) { markDirty(); });
+$('labelSkipBrowser').addEventListener('click', function(event) { event.stopPropagation(); });
+$('chkSkipBrowser').addEventListener('change', function(event) { markDirty(); });
+$('rngApprove').addEventListener('input', function(event) { $('valApprove').textContent=this.value+'ms'; markDirty(); });
+$('rngApprove').addEventListener('change', function(event) { markDirty(); });
+$('rngScroll').addEventListener('input', function(event) { $('valScroll').textContent=this.value+'ms'; markDirty(); });
+$('rngScroll').addEventListener('change', function(event) { markDirty(); });
+$('rngPause').addEventListener('input', function(event) { $('valPause').textContent=this.value+'ms'; markDirty(); });
+$('rngPause').addEventListener('change', function(event) { markDirty(); });
+$('btnConfigureAutopilot').addEventListener('click', function() { vscode.postMessage({command:'configureAutopilot'}); });
+$('btnPermissionProfile').addEventListener('click', function() { vscode.postMessage({command:'permissionProfile'}); });
+$('btnScanSpeed').addEventListener('click', function() { vscode.postMessage({command:'scanSpeed'}); });
+$('btnManageTerminal').addEventListener('click', function(event) { vscode.postMessage({command:'manageTerminal'}); });
+$('btnDiagnostics').addEventListener('click', function(event) { vscode.postMessage({command:'openDiagnostics'}); });
+$('btnDecisionDetails').addEventListener('click', function(event) { showLatestDecisionDetails(); });
+$('btnRefreshTrace').addEventListener('click', function(event) { refreshTrace(); });
+$('btnRefreshObserver').addEventListener('click', function(event) { vscode.postMessage({command:'refreshObserver'}); });
+$('selTraceFilter').addEventListener('change', function(event) { resetTracePaging(); renderTrace(); });
+$('searchTrace').addEventListener('input', function(event) { resetTracePaging(); renderTrace(); });
+$('btnTracePrev').addEventListener('click', function(event) { changeTracePage(-1); });
+$('btnTraceNext').addEventListener('click', function(event) { changeTracePage(1); });
+$('selLogFilter').addEventListener('change', function(event) { resetLogPaging(); renderWikiLog(); });
+$('searchLog').addEventListener('input', function(event) { resetLogPaging(); renderWikiLog(); });
+$('btnRefreshLog').addEventListener('click', function(event) { getLog(); });
+$('btnClearLog').addEventListener('click', function(event) { clearLog(); });
+$('btnLogPrev').addEventListener('click', function(event) { changeLogPage(-1); });
+$('btnLogNext').addEventListener('click', function(event) { changeLogPage(1); });
+$('btnSave').addEventListener('click', function(event) { save(); });
+$('btnReloadWindow').addEventListener('click', function(event) { vscode.postMessage({command:'reload'}); });
+$('btnResetStats').addEventListener('click', function(event) { resetStats(); });
+$('confirmNo').addEventListener('click', function(event) { closeConfirm(); });
+
+renderOperationPresets();
+renderPatterns();
+renderStats();
+renderConcepts();
+renderWikiLog();
+renderTerminalRules();
+renderToolBreakdown(_sessionState ? _sessionState.toolBreakdown : null);
+renderTrace();
+renderTraceDiagnostics();
+updateRoiUI(_roiState);
+updateSessionUI(_sessionState);
+renderRuntime();
+syncSavedStateBadges();
+_savedSnapshot = currentSettingsSnapshot();
+updateDirtyState();
+refreshTrace();
+</script>
+</body>
+</html>

@@ -1,167 +1,73 @@
 // ═══════════════════════════════════════════════════════════════
-//  Grav — Terminal command analysis, evaluation & listener
+//  Grav — Terminal Activity Listener
+//
+//  Captures terminal commands via multiple VS Code APIs:
+//  1. onDidStartTerminalShellExecution (VS Code 1.93+)
+//  2. onDidEndTerminalShellExecution (exit code = RLVR signal)
+//  3. onDidWriteTerminalData fallback (older VS Code)
+//  4. Shell integration polling
+//  5. Shell integration change listener
 // ═══════════════════════════════════════════════════════════════
+'use strict';
+
 const vscode = require('vscode');
-const { state } = require('./state');
-const { SAFE_TERMINAL_CMDS, DEFAULT_BLACKLIST, LEARN } = require('./constants');
-const { cfg } = require('./utils');
-const { getPromotedCommands, recordCommandAction, wikiQuery } = require('./learning');
+const { cfg, extractCommands } = require('./utils');
+const { DEFAULT_BLACKLIST, SAFE_TERMINAL_CMDS } = require('./constants');
+const autofix = require('./autofix');
+const Policy = require('./action-policy');
+const { getEffectiveConfig } = require('./configuration');
 
 /**
- * Extract individual command names from a compound command string.
- * Handles: pipes (|), chains (&&, ||, ;), subshells ($(...)), xargs, etc.
+ * Setup all terminal listeners.
+ * @param {vscode.ExtensionContext} ctx
+ * @param {object} learning - learning module reference
  */
-function extractCommands(cmdLine) {
-    if (!cmdLine || typeof cmdLine !== 'string') return [];
-    const parts = cmdLine.split(/\s*(?:\|\||&&|[|;&])\s*/);
-    const cmds = [];
-    for (const part of parts) {
-        let p = part.trim();
-        if (!p) continue;
-        p = p.replace(/^(?:(?:sudo|nohup|time|nice|ionice|strace|ltrace|env)\s+)+/gi, '');
-        p = p.replace(/^(?:\w+=\S+\s+)+/, '');
-        p = p.replace(/^\$\(\s*/, '').replace(/^\(\s*/, '').replace(/\)\s*$/, '');
-        const match = p.match(/^([^\s]+)/);
-        if (match) {
-            let cmd = match[1];
-            cmd = cmd.replace(/^.*[/\\]/, '');
-            if (cmd) cmds.push(cmd.toLowerCase());
-        }
-    }
-    return [...new Set(cmds)];
-}
-
-/**
- * Check if a full command line matches any blacklist pattern.
- * Supports substring matching and /regex/ patterns with length limit.
- */
-function matchesBlacklist(cmdLine, blacklist) {
-    const lower = cmdLine.toLowerCase().trim();
-    for (const pattern of blacklist) {
-        const p = pattern.toLowerCase().trim();
-        if (!p) continue;
-        if (lower.includes(p)) return pattern;
-        if (p.startsWith('/') && p.endsWith('/') && p.length <= LEARN.MAX_REGEX_LEN) {
-            try {
-                if (new RegExp(p.slice(1, -1), 'i').test(cmdLine)) return pattern;
-            } catch (_) {}
-        }
-    }
-    return null;
-}
-
-/**
- * Evaluate a command line against whitelist + blacklist + learned data.
- */
-function evaluateCommand(cmdLine) {
-    const blacklist = [...DEFAULT_BLACKLIST, ...state.userBlacklist];
-    const whitelist = [...SAFE_TERMINAL_CMDS, ...state.userWhitelist];
-
-    const blocked = matchesBlacklist(cmdLine, blacklist);
-    if (blocked) return { allowed: false, reason: `Blocked by blacklist: "${blocked}"`, commands: [], confidence: -1, wiki: null };
-
-    const cmds = extractCommands(cmdLine);
-    if (cmds.length === 0) return { allowed: false, reason: 'Could not parse command', commands: [], confidence: 0, wiki: null };
-
-    const promotedCmds = getPromotedCommands();
-    const fullWhitelist = [...whitelist, ...promotedCmds, ...state.patternCache];
-    const unknown = [];
-    let minConf = 1.0;
-    const wikiInsights = [];
-
-    for (const cmd of cmds) {
-        if (fullWhitelist.includes(cmd)) continue;
-
-        const wikiPage = wikiQuery(cmd);
-        if (wikiPage) {
-            wikiInsights.push({ cmd, riskLevel: wikiPage.riskLevel, summary: wikiPage.summary });
-            if (wikiPage.riskLevel === 'safe' && wikiPage.totalEvents >= LEARN.OBSERVE_MIN) {
-                minConf = Math.min(minConf, wikiPage.confidence);
-                continue;
-            }
-            if (wikiPage.riskLevel === 'caution' && wikiPage.confidence > 0) {
-                minConf = Math.min(minConf, wikiPage.confidence * 0.5);
-                continue;
-            }
-        }
-
-        const entry = state.learnData[cmd];
-        if (entry && entry.conf > 0) {
-            minConf = Math.min(minConf, entry.conf);
-            continue;
-        }
-        unknown.push(cmd);
-    }
-
-    if (unknown.length > 0) {
-        return { allowed: false, reason: `Unknown commands: ${unknown.join(', ')}`, commands: cmds, confidence: 0, wiki: wikiInsights };
-    }
-    return { allowed: true, reason: 'All commands whitelisted', commands: cmds, confidence: minConf, wiki: wikiInsights };
-}
-
-/**
- * Configure VS Code terminal auto-approve settings based on whitelist + learned commands.
- */
-function setupSafeApprove() {
-    setTimeout(() => {
+function setup(ctx, learning, opts = {}) {
+    let disposed = false;
+    ctx.subscriptions.push({ dispose: () => { disposed = true; } });
+    function getPolicy() {
         try {
-            const c = vscode.workspace.getConfiguration();
-            const rules = c.get('chat.tools.terminal.autoApprove') || {};
-            const allWhitelist = [...SAFE_TERMINAL_CMDS, ...state.userWhitelist];
-            const promoted = getPromotedCommands();
-            for (const cmd of promoted) {
-                if (!allWhitelist.includes(cmd)) allWhitelist.push(cmd);
-            }
-            for (const pat of state.patternCache) {
-                if (!allWhitelist.includes(pat)) allWhitelist.push(pat);
-            }
-            for (const cmd of allWhitelist) {
-                if (!state.userBlacklist.includes(cmd)) rules[cmd] = true;
-            }
-            for (const cmd of state.userBlacklist) delete rules[cmd];
-            delete rules['/^/'];
-            delete rules['/.*/s'];
+            const supplied = opts.getPolicy ? opts.getPolicy() : getEffectiveConfig(ctx);
+            if (!supplied) return { enabled: false };
+            return { enabled: cfg('enabled', true), paused: false, dryRun: cfg('dryRun', false), terminalWhitelist: cfg('terminalWhitelist', []), builtInGrants: SAFE_TERMINAL_CMDS, ...supplied,
+                blacklist: [...new Set([...DEFAULT_BLACKLIST, ...(supplied.blacklist || supplied.terminalBlacklist || cfg('terminalBlacklist', []))])] };
+        } catch (_) { return { enabled: false }; }
+    }
 
-            c.update('chat.tools.terminal.autoApprove', rules, vscode.ConfigurationTarget.Global)
-                .then(() => c.update('chat.tools.terminal.enableAutoApprove', true, vscode.ConfigurationTarget.Global))
-                .then(() => c.update('chat.tools.terminal.ignoreDefaultAutoApproveRules', false, vscode.ConfigurationTarget.Global))
-                .then(() => c.update('chat.tools.terminal.autoReplyToPrompts', true, vscode.ConfigurationTarget.Global))
-                .then(() => c.update('chat.tools.edits.autoApprove', true, vscode.ConfigurationTarget.Global))
-                .then(() => c.update('chat.agent.terminal.autoApprove', true, vscode.ConfigurationTarget.Global))
-                .catch(() => {});
-        } catch (_) {}
-    }, 3000);
-}
-
-/**
- * Terminal activity listener — captures commands for the learning engine.
- * FIX: Only records once per command execution (at end, when exit code is known)
- * to prevent duplicate event recording.
- */
-function setupTerminalListener(ctx) {
     const _pendingExecs = new Map();
+    const _seenCmds = new Set();
 
-    const hasShellExec = !!vscode.window.onDidStartTerminalShellExecution;
-    const hasShellEnd  = !!vscode.window.onDidEndTerminalShellExecution;
-    const hasWriteData = !!vscode.window.onDidWriteTerminalData;
-    console.log(`[Grav] Terminal listener: shellExec=${hasShellExec} shellEnd=${hasShellEnd} writeData=${hasWriteData}`);
+    const _autoFixedCmds = new Map();
 
-    // Track command start (don't record yet — wait for end event with exit code)
+    function getProject() {
+        return vscode.workspace.workspaceFolders?.[0]?.name;
+    }
+
+    // Safe record — skip blacklisted commands to prevent learning dangerous patterns
+    function safeRecord(cmdLine, action, context) {
+        if (!cfg('learnEnabled', true)) return;
+        if (disposed || Policy.evaluateCommand(cmdLine, getPolicy()).decision === 'deny') return;
+        learning.recordAction(cmdLine, action, { ...context, source: 'terminal-observation' });
+    }
+
+    // ── Method 1: Shell execution API ──
     if (vscode.window.onDidStartTerminalShellExecution) {
         ctx.subscriptions.push(
             vscode.window.onDidStartTerminalShellExecution(e => {
                 try {
                     const cmdLine = e.execution?.commandLine?.value || e.execution?.commandLine || '';
-                    console.log('[Grav] shellExec START:', cmdLine);
-                    if (!cmdLine || cmdLine.length < 2) return;
+                    if (!cmdLine || cmdLine.length < 3) return;
+                    if (/^\d+$/.test(cmdLine.trim())) return;  // pure number output, not a command
                     const id = e.execution?.id || Date.now().toString();
                     _pendingExecs.set(id, { command: cmdLine, startTime: Date.now() });
-                } catch (err) { console.error('[Grav] shellExec error:', err.message); }
+                    if (cfg('learnEnabled', true)) {
+                        safeRecord(cmdLine, 'approve', { project: getProject() });
+                    }
+                } catch (_) { /* non-critical */ }
             })
         );
     }
 
-    // Record at command end (with exit code for RLVR)
     if (vscode.window.onDidEndTerminalShellExecution) {
         ctx.subscriptions.push(
             vscode.window.onDidEndTerminalShellExecution(e => {
@@ -169,94 +75,103 @@ function setupTerminalListener(ctx) {
                     const id = e.execution?.id || '';
                     const exitCode = e.exitCode;
                     const pending = _pendingExecs.get(id);
+                    const cmdLine = pending ? pending.command : (e.execution?.commandLine?.value || e.execution?.commandLine || '');
+                    const tid = e.terminal?.name || 'default';
+
                     if (pending) {
                         _pendingExecs.delete(id);
                         if (cfg('learnEnabled', true) && typeof exitCode === 'number') {
-                            recordCommandAction(pending.command, exitCode === 0 ? 'approve' : 'reject', {
-                                exitCode,
-                                project: vscode.workspace.workspaceFolders?.[0]?.name,
-                                duration: Date.now() - pending.startTime,
+                            safeRecord(cmdLine, exitCode === 0 ? 'approve' : 'reject', {
+                                exitCode, project: getProject(), duration: Date.now() - pending.startTime,
                             });
                         }
                     } else {
-                        const cmdLine = e.execution?.commandLine?.value || e.execution?.commandLine || '';
                         if (cmdLine && cfg('learnEnabled', true) && typeof exitCode === 'number') {
-                            recordCommandAction(cmdLine, exitCode === 0 ? 'approve' : 'reject', {
-                                exitCode,
-                                project: vscode.workspace.workspaceFolders?.[0]?.name,
+                            safeRecord(cmdLine, exitCode === 0 ? 'approve' : 'reject', {
+                                exitCode, project: getProject(),
                             });
                         }
                     }
-                } catch (_) {}
+
+                    // Auto-Fixer logic (safe mode: no buffer output to prevent IDE crash)
+                    if (!disposed && cmdLine && Number.isInteger(exitCode) && exitCode !== 0) {
+                        const fixedCmd = autofix.evaluate(cmdLine, '');
+                        if (fixedCmd && Policy.evaluateCommand(fixedCmd, getPolicy()).allowed) {
+                            const fixKey = tid + ':' + cmdLine;
+                            const lastFix = _autoFixedCmds.get(fixKey) || 0;
+                            if (Date.now() - lastFix > 10000) {
+                                _autoFixedCmds.set(fixKey, Date.now());
+                                console.log(`[Grav] Auto-Fix suggestion: ${fixedCmd}`);
+
+                                // Suggestions are the default; explicit permission is required for execution.
+                                const policy = getPolicy();
+                                if (!disposed && policy.autoFixEnabled === true && Policy.canAct(policy) &&
+                                    !/[\r\n;&|`$<>\\]/.test(fixedCmd) && Policy.evaluateCommand(fixedCmd, policy).allowed) {
+                                    e.terminal?.sendText(fixedCmd);
+                                }
+                            }
+                        }
+                    }
+                } catch (_) { /* non-critical */ }
             })
         );
     }
 
-    // Fallback for older VS Code without shell execution API
-    if (!vscode.window.onDidStartTerminalShellExecution && vscode.window.onDidWriteTerminalData) {
+    // ── Method 2: Terminal data write (fallback & output buffer) ──
+    try { if (vscode.window.onDidWriteTerminalData) {
         const _termBuffers = new Map();
         ctx.subscriptions.push(
             vscode.window.onDidWriteTerminalData(e => {
                 try {
-                    if (!cfg('learnEnabled', true)) return;
                     const tid = e.terminal?.name || 'default';
+
+                    // Always maintain buffer regardless of learnEnabled — avoids data loss
+                    // when learning is re-enabled mid-stream (buffer was previously dropped).
                     const buf = (_termBuffers.get(tid) || '') + e.data;
                     const lines = buf.split(/\r?\n/);
+                    const tail = lines.length > 1 ? lines[lines.length - 1] : buf.slice(-1000);
+
+                    if (!cfg('learnEnabled', true)) {
+                        _termBuffers.set(tid, tail);
+                        return;
+                    }
+
                     if (lines.length > 1) {
                         for (let i = 0; i < lines.length - 1; i++) {
                             const line = lines[i].replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
                             if (!line || line.length < 3 || line.length > 500) continue;
                             const cmdMatch = line.match(/^[\$>%#]\s+(.+)/) || line.match(/\$\s+(.+)$/);
-                            if (cmdMatch) {
-                                const cmdLine = cmdMatch[1].trim();
-                                if (cmdLine.length >= 2) {
-                                    recordCommandAction(cmdLine, 'approve', {
-                                        project: vscode.workspace.workspaceFolders?.[0]?.name,
-                                    });
-                                }
+                            if (cmdMatch && cmdMatch[1].trim().length >= 2) {
+                                safeRecord(cmdMatch[1].trim(), 'approve', { project: getProject() });
                             }
                         }
-                        _termBuffers.set(tid, lines[lines.length - 1]);
+                        _termBuffers.set(tid, tail);
                     } else {
-                        _termBuffers.set(tid, buf.slice(-1000));
+                        _termBuffers.set(tid, tail);
                     }
-                } catch (_) {}
+                } catch (_) { /* non-critical */ }
             })
         );
-    }
+    } } catch (_) { /* terminalDataWriteEvent API not available in this IDE version */ }
 
-    // Terminal open tracking
+    // ── Method 3: Terminal open tracking ──
     ctx.subscriptions.push(
         vscode.window.onDidOpenTerminal(t => {
             try {
                 const name = t.name || '';
-                console.log('[Grav] terminal opened:', name);
                 if (name && cfg('learnEnabled', true)) {
                     const cmds = extractCommands(name);
-                    if (cmds.length > 0 && cmds[0] !== 'terminal' && cmds[0] !== 'bash' && cmds[0] !== 'zsh' && cmds[0] !== 'sh') {
-                        console.log('[Grav] learning from terminal name:', name, '\u2192', cmds);
-                        recordCommandAction(name, 'approve', {
-                            project: vscode.workspace.workspaceFolders?.[0]?.name,
-                        });
+                    if (cmds.length > 0 && !['terminal', 'bash', 'zsh', 'sh'].includes(cmds[0])) {
+                        safeRecord(name, 'approve', { project: getProject() });
                     }
                 }
-            } catch (_) {}
+            } catch (_) { /* non-critical */ }
         })
     );
 
-    // Cleanup stale pending executions (>5 min)
-    const cleanupTimer = setInterval(() => {
-        const cutoff = Date.now() - 300000;
-        for (const [id, p] of _pendingExecs) {
-            if (p.startTime < cutoff) _pendingExecs.delete(id);
-        }
-    }, 60000);
-    ctx.subscriptions.push({ dispose: () => clearInterval(cleanupTimer) });
-
-    // Poll shell integration command history
-    const _seenCmds = new Set();
+    // ── Method 4: Poll shell integration ──
     const pollTimer = setInterval(() => {
-        if (!cfg('learnEnabled', true) || !state.enabled) return;
+        if (!cfg('learnEnabled', true)) return;
         try {
             for (const term of vscode.window.terminals) {
                 const si = term.shellIntegration;
@@ -268,69 +183,62 @@ function setupTerminalListener(ctx) {
                         const key = term.name + ':' + cmdLine + ':' + (exec.startTimestamp || 0);
                         if (!_seenCmds.has(key)) {
                             _seenCmds.add(key);
-                            console.log('[Grav] poll captured:', cmdLine);
                             const exitCode = typeof exec.exitCode === 'number' ? exec.exitCode : undefined;
-                            recordCommandAction(cmdLine, exitCode === undefined || exitCode === 0 ? 'approve' : 'reject', {
-                                exitCode,
-                                project: vscode.workspace.workspaceFolders?.[0]?.name,
+                            safeRecord(cmdLine, exitCode === undefined || exitCode === 0 ? 'approve' : 'reject', {
+                                exitCode, project: getProject(),
                             });
                         }
                     }
                 }
-                if (si.commandDetection && si.commandDetection.commands) {
-                    for (const cmd of si.commandDetection.commands) {
-                        const cmdLine = cmd.command || cmd.commandLine?.value || '';
-                        if (!cmdLine || cmdLine.length < 2) continue;
-                        const key = term.name + ':' + cmdLine + ':' + (cmd.timestamp || cmd.startTimestamp || 0);
-                        if (_seenCmds.has(key)) continue;
-                        _seenCmds.add(key);
-                        console.log('[Grav] history captured:', cmdLine);
-                        const exitCode = typeof cmd.exitCode === 'number' ? cmd.exitCode : undefined;
-                        recordCommandAction(cmdLine, exitCode === undefined || exitCode === 0 ? 'approve' : 'reject', {
-                            exitCode,
-                            project: vscode.workspace.workspaceFolders?.[0]?.name,
-                        });
-                    }
+            }
+            // Prevent memory leak — gradual eviction instead of spike-and-clear
+            if (_seenCmds.size > 3000) {
+                const iter = _seenCmds.values();
+                // Delete oldest 1000 entries (Set preserves insertion order)
+                for (let i = 0; i < 1000; i++) {
+                    const val = iter.next().value;
+                    if (val) _seenCmds.delete(val);
                 }
             }
-            if (_seenCmds.size > 5000) {
-                const arr = [..._seenCmds];
-                _seenCmds.clear();
-                for (let i = arr.length - 2000; i < arr.length; i++) _seenCmds.add(arr[i]);
-            }
-        } catch (_) {}
+        } catch (_) { /* non-critical */ }
     }, 3000);
     ctx.subscriptions.push({ dispose: () => clearInterval(pollTimer) });
 
-    // Shell integration change listener
+    // ── Method 5: Shell integration change listener ──
     if (vscode.window.onDidChangeTerminalShellIntegration) {
         ctx.subscriptions.push(
             vscode.window.onDidChangeTerminalShellIntegration(e => {
                 try {
                     const si = e.shellIntegration;
                     if (!si || !si.onDidExecuteCommand) return;
-                    console.log('[Grav] shellIntegration ready for:', e.terminal?.name);
                     ctx.subscriptions.push(
                         si.onDidExecuteCommand(cmd => {
                             try {
                                 const cmdLine = cmd.commandLine?.value || cmd.commandLine || '';
-                                console.log('[Grav] shellIntegration cmd:', cmdLine, 'exit:', cmd.exitCode);
                                 if (!cmdLine || cmdLine.length < 2 || !cfg('learnEnabled', true)) return;
                                 const key = (e.terminal?.name || '') + ':' + cmdLine + ':' + Date.now();
                                 if (_seenCmds.has(key)) return;
                                 _seenCmds.add(key);
                                 const exitCode = typeof cmd.exitCode === 'number' ? cmd.exitCode : undefined;
-                                recordCommandAction(cmdLine, exitCode === undefined || exitCode === 0 ? 'approve' : 'reject', {
-                                    exitCode,
-                                    project: vscode.workspace.workspaceFolders?.[0]?.name,
+                                safeRecord(cmdLine, exitCode === undefined || exitCode === 0 ? 'approve' : 'reject', {
+                                    exitCode, project: getProject(),
                                 });
-                            } catch (_) {}
+                            } catch (_) { /* non-critical */ }
                         })
                     );
-                } catch (_) {}
+                } catch (_) { /* non-critical */ }
             })
         );
     }
+
+    // ── Cleanup stale pending executions ──
+    const cleanupTimer = setInterval(() => {
+        const cutoff = Date.now() - 300000;
+        for (const [id, p] of _pendingExecs) {
+            if (p.startTime < cutoff) _pendingExecs.delete(id);
+        }
+    }, 60000);
+    ctx.subscriptions.push({ dispose: () => clearInterval(cleanupTimer) });
 }
 
-module.exports = { extractCommands, matchesBlacklist, evaluateCommand, setupSafeApprove, setupTerminalListener };
+module.exports = { setup };

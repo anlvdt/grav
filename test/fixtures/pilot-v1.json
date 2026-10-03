@@ -1,0 +1,13 @@
+{
+  "version": "pilot-v1",
+  "durationMs": 12000,
+  "events": [
+    {"at":201,"target":"a","request":"r1","command":"tool status","legitimate":true},
+    {"at":2501,"target":"b","request":"r1","command":"tool status","legitimate":true},
+    {"at":4201,"target":"a","request":"r1","command":"tool status","legitimate":true},
+    {"at":5501,"target":"a","request":"r2","command":"tool status","legitimate":true},
+    {"at":7001,"target":"b","request":"r2","command":"tool deploy","legitimate":false},
+    {"at":8501,"target":"b","request":"r3","command":"tool status && tool deploy","legitimate":false},
+    {"at":10001,"target":"b","request":"r4","command":"tool status","legitimate":true}
+  ]
+}
