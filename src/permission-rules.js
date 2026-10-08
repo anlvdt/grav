@@ -18,9 +18,9 @@ function activeRules(rules, workspace, now = Date.now()) {
 function preview(rule, commands, policy) { return commands.map(command => ({ command, ...Policy.evaluateCommand(command, { ...policy, permissionRules: [...(policy.permissionRules || []), rule] }) })); }
 async function manageRules(vscode, ctx, getPolicy) {
     const config = vscode.workspace.getConfiguration('grav');
-    const action = await vscode.window.showQuickPick(['Create rule', 'Revoke rule', 'View history'], { placeHolder: 'Explicit Grav rules; host permissions are unchanged' });
+    const action = await vscode.window.showQuickPick(['Create rule', 'Revoke rule', 'View history'], { placeHolder: 'Explicit Antigravity Auto Submit rules; host permissions are unchanged' });
     if (!action) return;
-    if (action === 'Create rule' && (config.get('permissionRules', []).length + sessionRules.length >= 256)) return vscode.window.showWarningMessage('[Grav] Rule budget reached; revoke an existing rule first.');
+    if (action === 'Create rule' && (config.get('permissionRules', []).length + sessionRules.length >= 256)) return vscode.window.showWarningMessage('[Antigravity Auto Submit] Rule budget reached; revoke an existing rule first.');
     const history = (ctx.globalState.get('permissionHistory', []) || []).slice(-49);
     if (action === 'View history') {
         const doc = await vscode.workspace.openTextDocument({ content: JSON.stringify(history, null, 2), language: 'json' });
@@ -37,7 +37,7 @@ async function manageRules(vscode, ctx, getPolicy) {
     }
     const command = await vscode.window.showInputBox({ prompt: 'Literal command example (quoting supported; shell syntax requires manual review)' });
     if (!command) return;
-    const effect = await vscode.window.showQuickPick(['allow', 'deny'], { placeHolder: 'Grav auto-approval decision' });
+    const effect = await vscode.window.showQuickPick(['allow', 'deny'], { placeHolder: 'Antigravity Auto Submit auto-approval decision' });
     if (!effect) return;
     const match = await vscode.window.showQuickPick(['exact', 'prefix'], { placeHolder: 'Exact argv, or prefix allowing additional arguments' });
     if (!match) return;
@@ -56,6 +56,6 @@ async function manageRules(vscode, ctx, getPolicy) {
         if (rule.scope === 'session') sessionRules.push(rule);
         else await config.update('permissionRules', [...(config.get('permissionRules', []) || []), rule], vscode.ConfigurationTarget.Global);
         await ctx.globalState.update('permissionHistory', [...history, { action: 'create', id: rule.id, scope: rule.scope, match: rule.match, at: Date.now() }]);
-    } catch (error) { await vscode.window.showWarningMessage('[Grav] ' + error.message); }
+    } catch (error) { await vscode.window.showWarningMessage('[Antigravity Auto Submit] ' + error.message); }
 }
 module.exports = { validateRule, activeRules, preview, manageRules };

@@ -1,16 +1,20 @@
-# Antigravity Auto Accept — Grav (Auto Approve / Auto Run)
+# Antigravity Auto Submit
 
-**Configure once to keep supported agent workflows moving in Antigravity IDE.** Grav provides auto accept for supported edit actions and auto approve / auto run for supported terminal prompts under your configured rules. It also keeps chat scrolled to the latest response and offers dry run and diagnostics.
+**Configure once to keep supported agent workflows moving in Antigravity IDE.** Antigravity Auto Submit provides auto accept for supported edit actions and auto approve / auto run for supported terminal prompts under your configured rules. It also keeps chat scrolled to the latest response and offers dry run and diagnostics.
 
 The goal is to configure permissions and preferences once, then let jobs continue unattended. Current coverage depends on the host UI, verified executor and selected policy; broader permission, question and recovery automation is still under development and has not been validated end to end on the live IDE.
 
-[![Version](https://img.shields.io/badge/version-4.0.19-blue)](https://marketplace.visualstudio.com/items?itemName=ANLE.grav) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/ANLE.grav?label=Marketplace)](https://marketplace.visualstudio.com/items?itemName=ANLE.grav)
+[![Version](https://img.shields.io/badge/version-4.0.22-blue)](https://marketplace.visualstudio.com/items?itemName=ANLE.grav) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/ANLE.grav?label=Marketplace)](https://marketplace.visualstudio.com/items?itemName=ANLE.grav)
 
 ---
 
-## Why Grav?
+## Why Antigravity Auto Submit?
 
-Antigravity runs its agent panel inside an Out-of-Process IFrame (OOPIF). Grav uses **Chrome DevTools Protocol (CDP)** and an injected observer to find supported approval controls across webview and Shadow DOM boundaries. Terminal rules decide whether Grav may attempt an approval; matching a button label alone does not grant permission.
+Antigravity runs its agent panel inside an Out-of-Process IFrame (OOPIF). Antigravity Auto Submit uses **Chrome DevTools Protocol (CDP)** and an injected observer to find supported approval controls across webview and Shadow DOM boundaries. Terminal rules decide whether Antigravity Auto Submit may attempt an approval; matching a button label alone does not grant permission.
+
+The CDP engine uses browser pointer input for supported buttons in the attached document. It rechecks the live policy, request identity, visibility and hit target before consuming a single-use click ticket. Nested documents and the injected fallback retain DOM activation; an uncertain result is never replayed as another click. CDP still requires a remote debugging port and a full IDE restart after initial setup.
+
+The public name is **Antigravity Auto Submit**. The extension ID remains `ANLE.grav`; settings (`grav.*`), command IDs and `.vscode/grav.json` remain compatible with existing installations.
 
 > **Primary target:** Antigravity IDE. VS Code Native Chat (Copilot Edits) has explicit guarded edit-accept commands; automatic native acceptance stays manual without verified request identity. Compatibility with other IDEs is not established by this documentation.
 
@@ -35,7 +39,7 @@ Evaluates extracted commands from supported terminal prompts **before** attempti
 Custom patterns via `grav.terminalBlacklist` support plain substrings and `/regex/` syntax.
 
 ### Terminal decisions and runtime state
-Test command, learning, the CDP observer and injected runtime use the same versioned evaluator. It returns allow, manual or deny with a reason, matched rules, scope and policy version. Only allow permits an auto-approval attempt. Deny means Grav declines auto-approval; it does not prohibit execution in the host.
+Test command, learning, the CDP observer and injected runtime use the same versioned evaluator. It returns allow, manual or deny with a reason, matched rules, scope and policy version. Only allow permits an auto-approval attempt. Deny means Antigravity Auto Submit declines auto-approval; it does not prohibit execution in the host.
 
 Antigravity IDE 2.5.5 reuses Submit for permission cards, agent questions and MCP forms. The typed autopilot adapter distinguishes supported command, file-read, file-write, URL-read, URL-action and MCP permission cards by their operation, exact target and selected permission scope. Configure matching grants once using Set up Autopilot. Generic questions, MCP forms, unrecognized cards and terminal-input prompts remain outside current executor coverage. Accept with an extracted command is evaluated as a command, including blacklist checks. Label matching and a Ready executor do not establish coverage of every host approval popup; see the approval research report in the repository.
 
@@ -52,11 +56,11 @@ CDP and injected runtimes share a bounded document ledger. Host-provided request
 Mutation events coalesce into a leading scheduled scan with a polling watchdog. Each scan handles up to 64 candidates. CDP target tasks have bounded concurrency and independent failure handling, and reconnect delays include jitter. Three unconfirmed approval UI postconditions stop that document with `no-progress`; Resume clears that breaker without deleting attempted intents. The ledger holds at most 256 entries, with payload retention up to 30 minutes. Unknown tombstones remain until the document ends. At the retention budget, manual approval or a new document is required. These conservative limits are pilot defaults, not calibrated production recommendations.
 
 Use the Rules tab or command palette:
-- Grav: Select Permission Profile chooses Observe, Edits, Terminal or Legacy. Observe never auto-approves. Edits allows command-free edit/UI actions. Terminal uses only scoped exact/prefix rules, with legacy grants inactive; browser/MCP approval requires manual review. Legacy preserves existing label/grant behavior.
-- Grav: Set Scan Speed changes scan cadence independently of grants and profile. Existing Safe/Balanced/Fast operation presets remain legacy combined presets; they can change button labels and browser skipping and should not be confused with the speed-only control.
-- Manage Terminal → Scoped Rules supports exact argv or prefix, allow/deny, session/project/user scope and expiry. The preview shows both rule-only and effective decisions, including nearby examples and any broad grants active in Legacy. Session rules are memory-only until extension restart; project rules bind to the recorded workspace. Revoke and bounded history are available. Grav does not directly write host permission rules. Approving a configured standing scope through the host UI can save a host permission; revoke saved standing permissions in the host’s settings.
+- Antigravity Auto Submit: Select Permission Profile chooses Observe, Edits, Terminal or Legacy. Observe never auto-approves. Edits allows command-free edit/UI actions. Terminal uses only scoped exact/prefix rules, with legacy grants inactive; browser/MCP approval requires manual review. Legacy preserves existing label/grant behavior.
+- Antigravity Auto Submit: Set Scan Speed changes scan cadence independently of grants and profile. Existing Safe/Balanced/Fast operation presets remain legacy combined presets; they can change button labels and browser skipping and should not be confused with the speed-only control.
+- Manage Terminal → Scoped Rules supports exact argv or prefix, allow/deny, session/project/user scope and expiry. The preview shows both rule-only and effective decisions, including nearby examples and any broad grants active in Legacy. Session rules are memory-only until extension restart; project rules bind to the recorded workspace. Revoke and bounded history are available. Antigravity Auto Submit does not directly write host permission rules. Approving a configured standing scope through the host UI can save a host permission; revoke saved standing permissions in the host’s settings.
 
-Diagnostics exposes a capability manifest, learning examples/provenance and metrics with labeled opportunity denominators. Host/build identity is reported only when readable; a matching adapter ACK is required, and adapter version mismatch disables readiness. Native automatic edit commands are now manual because no verified request identity/receipt is available. Explicit Grav: Accept All remains restricted to the known edit allowlist.
+Diagnostics exposes a capability manifest, learning examples/provenance and metrics with labeled opportunity denominators. Host/build identity is reported only when readable; a matching adapter ACK is required, and adapter version mismatch disables readiness. Native automatic edit commands are now manual because no verified request identity/receipt is available. Explicit Antigravity Auto Submit: Accept All remains restricted to the known edit allowlist.
 
 Learning distinguishes execution observations/results from explicit human approval/rejection labels. Automation does not create either human label. Examples redact common credential patterns, and suggestion scores never grant authorization. Diagnostics redaction is heuristic: review exports before sharing.
 
@@ -64,18 +68,18 @@ Pilot sequence: start with Observe, label opportunities, then use a narrow exact
 
 ### Configured autopilot permission cards (development)
 
-**Set up Autopilot** in the Rules tab, or **Grav: Configure Autopilot Profile (One-Time Setup)** in the command palette, offers Enable/Disable, Add grant, Remove grant and Save. Cancel discards unsaved changes; JSON authoring is unnecessary. This configures `grav.autopilotProfile`, separate from the existing permission profile. It starts disabled with no grants. Each grant names an exact operation target, allow/deny effect and permission scope (once, conversation, project, workspace or global); an optional workspace restriction binds it to that workspace. Wildcard targets are not supported. Observe remains non-actuating. Use once for the host’s default selected option; Grav currently verifies the selected scope and does not switch radio options. Nondefault scopes apply only when already selected. Standing grants cannot be installed where they could suppress a future local deny.
+**Set up Autopilot** in the Rules tab, or **Antigravity Auto Submit: Configure Autopilot Profile (One-Time Setup)** in the command palette, offers Enable/Disable, Add grant, Remove grant and Save. Cancel discards unsaved changes; JSON authoring is unnecessary. This configures `grav.autopilotProfile`, separate from the existing permission profile. It starts disabled with no grants. Each grant names an exact operation target, allow/deny effect and permission scope (once, conversation, project, workspace or global); an optional workspace restriction binds it to that workspace. Wildcard targets are not supported. Observe remains non-actuating. Use once for the host’s default selected option; Antigravity Auto Submit currently verifies the selected scope and does not switch radio options. Nondefault scopes apply only when already selected. Standing grants cannot be installed where they could suppress a future local deny.
 
 The adapter is gated to the installed macOS Antigravity IDE 2.5.5 build (`ecfbad74d93962fc8ca485d93ab9b4f3d4cb6cf8`) and permission-card controls: an exact Allow heading, editable permission target, native scope radio and Continue control. This source mapping is narrower evidence than a live unattended workflow test. End-to-end behavior remains unverified; it does not establish coverage of generic questions, MCP forms, every popup or background conversation. Question, form, plan and background-conversation adapters are remaining automation work; they are not covered by a generic Submit match.
 
 ### Automatic recovery and job evidence
 
-Grav automatically reconnects CDP, repairs a missing renderer observer and restarts a failed bridge listener, with bounded rapid repairs followed by a cooldown. Stale connections and callbacks cannot replace the current controller. Known approval attempts are retained in a bounded extension-host journal to prevent replay after a renderer remount when the same surface identity is available. An unobserved attempt or extension-host restart still has an unknown outcome; automatic repair does not justify repeating it.
+Antigravity Auto Submit automatically reconnects CDP, repairs a missing renderer observer and restarts a failed bridge listener, with bounded rapid repairs followed by a cooldown. Stale connections and callbacks cannot replace the current controller. Known approval attempts are retained in a bounded extension-host journal to prevent replay after a renderer remount when the same surface identity is available. An unobserved attempt or extension-host restart still has an unknown outcome; automatic repair does not justify repeating it.
 
 Diagnostics separates executor recovery from job progress. The job tracker includes failed and unfinished jobs in its denominator and distinguishes setup from later intervention. It requires explicit host lifecycle evidence for starts and completion; the current adapters do not yet supply that evidence, so an unattended completion rate is unavailable rather than inferred from clicks.
 
 ### 🌐 Skip Browser SubAgent
-When the AI agent attempts to use a browser automation tool (`browser_subagent`, `computer_use`, `use_browser`), Grav detects it and clicks **Skip** instead of **Run** — preventing unintended browser sessions. Toggle via status bar or `Grav: Toggle Skip Browser SubAgent`.
+When the AI agent attempts to use a browser automation tool (`browser_subagent`, `computer_use`, `use_browser`), Antigravity Auto Submit detects it and clicks **Skip** instead of **Run** — preventing unintended browser sessions. Toggle via status bar or `Antigravity Auto Submit: Toggle Skip Browser SubAgent`.
 
 ### 📜 Auto-Scroll
 Keeps the chat panel pinned to the bottom while AI responds. Automatically pauses when you scroll up and resumes when you scroll back down.
@@ -84,14 +88,14 @@ Keeps the chat panel pinned to the bottom while AI responds. Automatically pause
 Observes explicit command approvals and rejections to suggest candidates with a suggestion score. This score is not a probability of safety. Learning never creates authorization. Use Manage Terminal to review and explicitly edit grants; the former Add/Blacklist learning prompt actions now route to policy management.
 
 ### 🛠️ Auto-Fixer
-If a terminal command fails with a numeric exit code, Grav suggests a correction in the extension log. The extension does not automatically execute suggestions.
+If a terminal command fails with a numeric exit code, Antigravity Auto Submit suggests a correction in the extension log. The extension does not automatically execute suggestions.
 - `gti status` → suggests `git status`
 - `npm instal` → suggests `npm install`
 - `python script.py` (missing alias on macOS) → suggests `python3 script.py`
 - Parses Git suggestions: `"The most similar command is..."`
 
 ### 💬 VS Code Native Chat & Copilot Edits
-Supports explicit native **Copilot Edits** edit-accept commands through Grav: Accept All; the automatic native fallback stays manual because verified request identity is unavailable. Supported terminal approvals use the Antigravity CDP policy evaluator; native tool approvals remain manual. Discovers native edit commands including `workbench.action.chat.applyAll`, `github.copilot.acceptWorkspaceEdit`, and inline chat accept buttons.
+Supports explicit native **Copilot Edits** edit-accept commands through Antigravity Auto Submit: Accept All; the automatic native fallback stays manual because verified request identity is unavailable. Supported terminal approvals use the Antigravity CDP policy evaluator; native tool approvals remain manual. Discovers native edit commands including `workbench.action.chat.applyAll`, `github.copilot.acceptWorkspaceEdit`, and inline chat accept buttons.
 
 ### 🗂️ Per-Project Patterns
 Define custom button patterns and blacklists per workspace via `.vscode/grav.json`. Changes reload live without restarting the extension. In multi-root workspaces only the first folder supplies `.vscode/grav.json`; project patterns augment the selected preset, blacklists augment global rules, and project `dryRun: true` forces observation only.
@@ -108,10 +112,10 @@ Define custom button patterns and blacklists per workspace via `.vscode/grav.jso
 Detects when the AI agent fires a `run_command` tool call and **instantly drops its scan interval to 800ms for 10 seconds** — then returns to normal. This reduces the delay before checking a newly appearing approval; short-lived or unsupported dialogs can still be missed.
 
 ### 🧩 Smart Terminal Kill Guard
-When a notification containing blocking keywords appears, Grav **inspects the actual DOM** before sending any kill signal. Only fires if the element contains a visible `<input>` or `<textarea>`. Approval toasts without a visible input do not qualify for that input-based kill path.
+When a notification containing blocking keywords appears, Antigravity Auto Submit **inspects the actual DOM** before sending any kill signal. Only fires if the element contains a visible `<input>` or `<textarea>`. Approval toasts without a visible input do not qualify for that input-based kill path.
 
 ### 🔍 Dry Run Mode
-Scan and match buttons without clicking. See exactly what Grav would click before enabling auto-approval on a new project.
+Scan and match buttons without clicking. See exactly what Antigravity Auto Submit would click before enabling auto-approval on a new project.
 
 ### 📊 Real-Time Dashboard (`Cmd+Shift+D`)
 - Toggle Auto-Click, Auto-Scroll, Dry Run, Skip Browser SubAgent
@@ -126,15 +130,15 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 ### From the Antigravity Extensions View
 
 1. Open **Antigravity IDE** and the Extensions view (`Cmd+Shift+X` on macOS or `Ctrl+Shift+X` on Windows/Linux).
-2. Search **Antigravity Auto Accept** or **Grav** and check publisher **ANLE**, extension ID **ANLE.grav**. The new display name appears after a future release; this checkout has not been published. Use the VSIX route if your IDE's registry does not list it.
-3. Install. With Grav and CDP enabled, Grav attempts to configure the current IDE's `argv.json` with the debug port (default `9333`); a host it cannot identify safely is left unchanged.
+2. Search **Antigravity Auto Submit** and check publisher **ANLE**, extension ID **ANLE.grav**. The new display name appears after a future release; this checkout has not been published. Use the VSIX route if your IDE's registry does not list it.
+3. Install. With Antigravity Auto Submit and CDP enabled, Antigravity Auto Submit attempts to configure the current IDE's `argv.json` with the debug port (default `9333`); a host it cannot identify safely is left unchanged.
 4. Fully quit the IDE (`Cmd+Q` on macOS), then reopen so the debug port takes effect.
-5. Run **Grav: Select Permission Profile** and choose the scope you want. Use Observe or Dry Run to inspect detection, or Terminal with explicit scoped rules for supported auto run prompts. Review any existing Legacy grants before using them.
-6. Check **Grav: Diagnostics** for executor and policy state. Close the dashboard to resume auto accept; opening it pauses approval. Ready indicates executor readiness, not completion of your agent's job.
+5. Run **Antigravity Auto Submit: Select Permission Profile** and choose the scope you want. Use Observe or Dry Run to inspect detection, or Terminal with explicit scoped rules for supported auto run prompts. Review any existing Legacy grants before using them.
+6. Check **Antigravity Auto Submit: Diagnostics** for executor and policy state. Close the dashboard to resume auto accept; opening it pauses approval. Ready indicates executor readiness, not completion of your agent's job.
 
 ### From VSIX (Manual)
 
-1. `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` → **Extensions: Install from VSIX** → select `grav-4.0.19.vsix`.
+1. `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` → **Extensions: Install from VSIX** → select `antigravity-auto-submit-4.0.22.vsix` (or `grav-4.0.22.vsix` from the default package command).
 2. Fully quit and reopen the IDE, then select a permission profile and verify state as above.
 
 > **Status bar shows disconnected?** Fully quit and reopen to apply the debug port. If it remains disconnected, use the troubleshooting steps below.
@@ -160,7 +164,7 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 | `grav.permissionRules` | `[]` | Explicit scoped exact/prefix rules with expiry |
 | `grav.autopilotProfile` | `{ "enabled": false, "grants": [] }` | Development: exact typed permission targets/scopes; separate from permissionProfile and pending live validation |
 | `grav.terminalWhitelist` | `[]` | Explicit grants: legacy executable or literal argv-prefix; blacklist wins |
-| `grav.terminalBlacklist` | `[]` | Decline Grav auto-approval (supports `/regex/`); host permissions unchanged |
+| `grav.terminalBlacklist` | `[]` | Decline Antigravity Auto Submit auto-approval (supports `/regex/`); host permissions unchanged |
 | `grav.cdpEnabled` | `true` | CDP engine (required for OOPIF access) |
 | `grav.cdpPort` | `9333` | CDP debug port |
 
@@ -170,25 +174,25 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 
 | Command | Shortcut | Description |
 |---|---|---|
-| `Grav: Select Permission Profile` | — | Select permission scopes independently of speed |
-| `Grav: Configure Autopilot Profile (One-Time Setup)` | — | Configure exact typed grants for supported permission cards (development) |
-| `Grav: Set Scan Speed` | — | Change cadence only |
-| `Grav: Dashboard` | `Cmd+Shift+D` | Open monitoring dashboard |
-| `Grav: Diagnostics` | — | CDP sessions, button detection state, conflict report |
-| `Grav: Pause Auto-Accept` | — | Temporarily pause clicking |
-| `Grav: Resume Auto-Accept` | — | Resume clicking |
-| `Grav: Accept All` | — | Force-click all accept commands once |
-| `Grav: Toggle Dry Run` | — | Toggle dry run mode |
-| `Grav: Toggle Auto-Scroll` | — | Toggle auto-scroll |
-| `Grav: Toggle Skip Browser SubAgent` | — | Toggle browser agent bypass |
-| `Grav: Refresh Observer` | — | Force re-inject observer into all sessions |
-| `Grav: Force Reconnect CDP` | — | Manually reconnect CDP |
-| `Grav: Init Project Config` | — | Create `.vscode/grav.json` template |
-| `Grav: Remove Injected Runtime` | — | Remove the injected runtime from the current IDE installation |
-| `Grav: Purge Bad Learning Data` | — | Clean up incorrectly learned entries |
-| `Grav: Learning Stats` | — | View candidate suggestion scores |
-| `Grav: Manage Terminal Commands` | — | Interactively manage whitelist/blacklist |
-| `Grav: Stop All Terminals` | `Cmd+Shift+Q` | Send Ctrl+C to agent terminals |
+| `Antigravity Auto Submit: Select Permission Profile` | — | Select permission scopes independently of speed |
+| `Antigravity Auto Submit: Configure Autopilot Profile (One-Time Setup)` | — | Configure exact typed grants for supported permission cards (development) |
+| `Antigravity Auto Submit: Set Scan Speed` | — | Change cadence only |
+| `Antigravity Auto Submit: Dashboard` | `Cmd+Shift+D` | Open monitoring dashboard |
+| `Antigravity Auto Submit: Diagnostics` | — | CDP sessions, button detection state, conflict report |
+| `Antigravity Auto Submit: Pause Auto-Accept` | — | Temporarily pause clicking |
+| `Antigravity Auto Submit: Resume Auto-Accept` | — | Resume clicking |
+| `Antigravity Auto Submit: Accept All` | — | Force-click all accept commands once |
+| `Antigravity Auto Submit: Toggle Dry Run` | — | Toggle dry run mode |
+| `Antigravity Auto Submit: Toggle Auto-Scroll` | — | Toggle auto-scroll |
+| `Antigravity Auto Submit: Toggle Skip Browser SubAgent` | — | Toggle browser agent bypass |
+| `Antigravity Auto Submit: Refresh Observer` | — | Force re-inject observer into all sessions |
+| `Antigravity Auto Submit: Force Reconnect CDP` | — | Manually reconnect CDP |
+| `Antigravity Auto Submit: Init Project Config` | — | Create `.vscode/grav.json` template |
+| `Antigravity Auto Submit: Remove Injected Runtime` | — | Remove the injected runtime from the current IDE installation |
+| `Antigravity Auto Submit: Purge Bad Learning Data` | — | Clean up incorrectly learned entries |
+| `Antigravity Auto Submit: Learning Stats` | — | View candidate suggestion scores |
+| `Antigravity Auto Submit: Manage Terminal Commands` | — | Interactively manage whitelist/blacklist |
+| `Antigravity Auto Submit: Stop All Terminals` | `Cmd+Shift+Q` | Send Ctrl+C to agent terminals |
 
 ---
 
@@ -196,12 +200,12 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 
 | Display | Meaning |
 |---|---|
-| `🚀 Grav` | Ready: verified executor with a current policy lease |
-| `⏸ Grav` | Paused: manual pause, typing, or visible dashboard |
-| `🚫 Grav` | Off |
-| `$(eye) Grav` | Dry-run: scan only |
-| `$(debug-disconnect) Grav` | Executor disconnected |
-| `$(question) Grav` | Unknown: target or policy lease unverified |
+| `🚀 Antigravity Auto Submit` | Ready: verified executor with a current policy lease |
+| `⏸ Antigravity Auto Submit` | Paused: manual pause, typing, or visible dashboard |
+| `🚫 Antigravity Auto Submit` | Off |
+| `$(eye) Antigravity Auto Submit` | Dry-run: scan only |
+| `$(debug-disconnect) Antigravity Auto Submit` | Executor disconnected |
+| `$(question) Antigravity Auto Submit` | Unknown: target or policy lease unverified |
 | `$(plug) N $(fold-down)` | CDP connected, N sessions, auto-scroll ON |
 | `$(debug-disconnect)` | CDP disconnected |
 | `$(exclude) SKIP` | Skip Browser SubAgent ON |
@@ -211,13 +215,13 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 
 ## Troubleshooting
 
-**CDP off / disconnected:** Fully quit the IDE (`Cmd+Q`), not just close the window. Reopen. If still failing: `Grav: Force Reconnect CDP`.
+**CDP off / disconnected:** Fully quit the IDE (`Cmd+Q`), not just close the window. Reopen. If still failing: `Antigravity Auto Submit: Force Reconnect CDP`.
 
-**Buttons not being clicked:** Check Dry Run in Dashboard. Open Activity log. Run `Grav: Diagnostics`. Verify label case matches exactly.
+**Buttons not being clicked:** Check Dry Run in Dashboard. Open Activity log. Run `Antigravity Auto Submit: Diagnostics`. Verify label case matches exactly.
 
-**Learning store has garbage:** Run `Grav: Purge Bad Learning Data` (also runs automatically on startup).
+**Learning store has garbage:** Run `Antigravity Auto Submit: Purge Bad Learning Data` (also runs automatically on startup).
 
-**Terminal being killed unexpectedly:** The Smart Terminal Kill Guard checks for DOM input presence before firing. If still happening, check `grav.terminalBlacklist` for conflicting entries via `Grav: Diagnostics`.
+**Terminal being killed unexpectedly:** The Smart Terminal Kill Guard checks for DOM input presence before firing. If still happening, check `grav.terminalBlacklist` for conflicting entries via `Antigravity Auto Submit: Diagnostics`.
 
 ---
 
@@ -316,7 +320,7 @@ Scan and match buttons without clicking. See exactly what Grav would click befor
 **Author:** An Le · [GitHub](https://github.com/anlvdt/grav) · [Issues](https://github.com/anlvdt/grav/issues) · anlvdt@gmail.com
 
 ☕️ **Support the Developer**
-If Grav saves you time, consider supporting:
+If Antigravity Auto Submit saves you time, consider supporting:
 - 💳 **MB Bank**: `0360126996868` (LE VAN AN)
 <p align="left">
   <img src="https://img.vietqr.io/image/970422-0360126996868-compact2.png" width="250" alt="MB Bank QR">

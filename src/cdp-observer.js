@@ -6,6 +6,7 @@
 
 const { browserSource } = require('./action-policy');
 const { browserSource: jobProducerSource } = require('./job-producer');
+const { browserSource: clickTicketsSource } = require('./trusted-click');
 
 const {
     HIGH_CONF, COOLDOWN, REJECT_WORDS, EDITOR_SKIP, SUPPRESS_KEYWORDS, LIMITS,
@@ -13,7 +14,7 @@ const {
 
 function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent, policy = {}) {
     // Version tag - increment this when observer logic changes
-    const OBSERVER_VERSION = 'v4.0.23-autopilot';
+    const OBSERVER_VERSION = 'v4.0.22-trusted-input';
     const config = { enabled: true, paused: false, patterns, blacklist, scrollEnabled, scrollPauseMs, dryRun, skipBrowserAgent, ...policy };
     return `(function() {
     'use strict';
@@ -41,6 +42,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     var CreateJobProducer = ${jobProducerSource};
     window.__gravPolicy = Policy;
     var coordinator = Policy.createCoordinator(window, "cdp-dom");
+    var clickTickets = (${clickTicketsSource})(document);
     var scheduler = Policy.createEventScheduler(safeScanner, { setTimeout: setTimeout, clearTimeout: window.clearTimeout.bind(window), delay: 50 });
     var current = initialConfig, policyExpiresAt = 0;
     var PATTERNS = ${JSON.stringify(patterns)};
@@ -54,7 +56,7 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     var lastUserScroll = 0, scrollTick;
     function canAct() { return !disposed && coordinator.snapshot().currentOwner && !coordinator.snapshot().reasonCode && typeof current.policyVersion === 'string' && Date.now() < policyExpiresAt && Policy.canAct(current); }
     function updateConfig(next) {
-        if (current.policyVersion !== next.policyVersion || next.paused || next.dryRun || !next.enabled) { coordinator.cancelPending(); scheduler.cancel(); }
+        if (current.policyVersion !== next.policyVersion || next.paused || next.dryRun || !next.enabled) { coordinator.cancelPending(); clickTickets.clear(); scheduler.cancel(); }
         var used = current.policyVersion === next.policyVersion ? current.retryUsed : null;
         current = Object.assign({}, next);
         if (used) current.retryUsed = used;
@@ -76,8 +78,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
         var health = coordinator.snapshot();
         return { adapterVersion: 'adapter-v1', scheduler: scheduler.snapshot(), ledger: health, reasonCode: health.reasonCode, verified: health.currentOwner && !health.reasonCode && !disposed && policyExpiresAt > Date.now() && !!current.policyVersion && !/grav.*dashboard/i.test(document.title || '') && /(?:vscode-webview:|vscode-file:)/.test(location.href), policyVersion: current.policyVersion, expiresAt: policyExpiresAt };
     }
-    window.__gravObserver = { version: '${OBSERVER_VERSION}', updateConfig: updateConfig, dispose: function() {
-        disposed = true; coordinator.cancelPending(); scheduler.cancel();
+    window.__gravObserver = { version: '${OBSERVER_VERSION}', updateConfig: updateConfig, prepareClick: clickTickets.prepare, dispose: function() {
+        disposed = true; coordinator.cancelPending(); clickTickets.clear(); scheduler.cancel();
         try { jobProducer.dispose(); } catch(_) {}
         timers.forEach(function(id) { window.clearTimeout(id); window.clearInterval(id); }); timers.clear();
         observers.forEach(function(observer) { observer.disconnect(); });
@@ -441,12 +443,8 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
     }
 
     // ══════════════════════════════════════════════════════════
-    //  SOLUTION 2: Multi-layer click execution
-    //  Learned from Puppeteer internals + chrome-accept-cookies:
-    //  Layer 1: .click() — standard DOM click
-    //  Layer 2: Full pointer event sequence (React SyntheticEvent)
-    //  Layer 3: .focus() + Enter key (keyboard activation)
-    //  Layer 4: Verify + retry after 200ms
+    //  One activation per intent. CDP pointer input is selected before any
+    //  DOM click; the injected runtime and nested documents use DOM activation.
     // ══════════════════════════════════════════════════════════
     function executeClick(btn, matched, text) {
         if (!canAct() || inEditorContext(btn) || btn.disabled || btn.isConnected === false || !(findMatch(labelOf(btn)) || Policy.interactionPattern(btn, current))) return;
@@ -491,15 +489,32 @@ function buildObserverScript(patterns, blacklist, scrollEnabled, scrollPauseMs, 
             if (decision.autoSubmit !== true) setTimeout(function() { Policy.interaction.submit(ctx.interaction); }, 300);
             return;
         }
-        coordinator.attempted(claim.entry); markClicked(btn, text);
-        try { btn.click(); } catch(_) { coordinator.postcondition(claim.entry, btn); return; }
-        if (/^(?:retry|try again|resume(?:\s+conversation)?)$/i.test(matched) && typeof conv === 'string' && conv && decision.reasonCode === 'retry-within-budget') {
-            if (!current.retryUsed) current.retryUsed = {};
-            current.retryUsed[conv] = (Number.isInteger(current.retryUsed[conv]) ? current.retryUsed[conv] : 0) + 1;
+        function attempted() {
+            coordinator.attempted(claim.entry); markClicked(btn, text);
+            if (/^(?:retry|try again|resume(?:\s+conversation)?)$/i.test(matched) && typeof conv === 'string' && conv && decision.reasonCode === 'retry-within-budget') {
+                if (!current.retryUsed) current.retryUsed = {};
+                current.retryUsed[conv] = (Number.isInteger(current.retryUsed[conv]) ? current.retryUsed[conv] : 0) + 1;
+            }
+            var data = Object.assign({ p: matched, b: text, cmd: cmd, intentId: intent.key, identityEvidence: intent.evidence, adapterVersion: 'adapter-v1', latencyMs: Date.now() - claim.entry.at, outcome: 'attempted' }, decision);
+            report('CLICK', data);
+            setTimeout(function() { coordinator.postcondition(claim.entry, btn); }, 1000);
+            if (matched === 'Expand') setTimeout(safeScanner, APPROVE_MS);
+            return data;
         }
-        report('CLICK', Object.assign({ p: matched, b: text, cmd: cmd, intentId: intent.key, identityEvidence: intent.evidence, adapterVersion: 'adapter-v1', latencyMs: Date.now() - claim.entry.at, outcome: 'attempted' }, decision));
-        setTimeout(function() { coordinator.postcondition(claim.entry, btn); }, 1000);
-        if (matched === 'Expand') setTimeout(safeScanner, APPROVE_MS);
+        if (current.trustedInput && btn.ownerDocument === document) {
+            var ticket = clickTickets.enqueue(btn, function() {
+                return canAct() && !inEditorContext(btn) && (inAgentContext(btn) || hasRejectNearby(btn)) && !btn.disabled &&
+                    Policy.evaluateAction(matched, Policy.readsCommand(matched) ? extractCmd(btn) : '', Policy.actionContext(btn, live)).allowed &&
+                    coordinator.valid(claim.entry, Policy.actionIdentity(coordinator, btn, labelOf(btn), current), current.policyVersion);
+            }, attempted);
+            if (ticket) {
+                report('INPUT', { ticket: ticket, policyVersion: current.policyVersion });
+                setTimeout(function() { clickTickets.discard(ticket); if (claim.entry.outcome === 'pending') claim.entry.outcome = 'cancelled'; }, 1000);
+            } else claim.entry.outcome = 'cancelled';
+            return;
+        }
+        attempted();
+        try { btn.click(); } catch(_) { coordinator.postcondition(claim.entry, btn); }
     }
 
     // ══════════════════════════════════════════════════════════

@@ -185,12 +185,12 @@ const evaluateCommand = (cmdLine, snapshot) => {
 
 const suggestPromotion = async (cmd, data) => {
     // P0 intentionally routes explicit policy edits to Manage Terminal instead of Add/Blacklist prompts.
-    const pick = await vscode.window.showInformationMessage(`[Grav] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)} after ${data.obs} observations. Learning does not grant authorization.`, 'Manage Terminal', 'Dismiss');
+    const pick = await vscode.window.showInformationMessage(`[Antigravity Auto Submit] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)} after ${data.obs} observations. Learning does not grant authorization.`, 'Manage Terminal', 'Dismiss');
     if (pick === 'Manage Terminal') await vscode.commands.executeCommand('grav.manageTerminal');
 };
 
 const suggestDemotion = async (cmd, data) => {
-    const pick = await vscode.window.showWarningMessage(`[Grav] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)}; frequently rejected. Review your policy manually.`, 'Manage Terminal', 'Dismiss');
+    const pick = await vscode.window.showWarningMessage(`[Antigravity Auto Submit] Candidate "${cmd}": suggestion score ${Math.round(data.conf * 100)}; frequently rejected. Review your policy manually.`, 'Manage Terminal', 'Dismiss');
     if (pick === 'Manage Terminal') await vscode.commands.executeCommand('grav.manageTerminal');
 };
 
@@ -229,7 +229,7 @@ const purgeBadEntries = () => {
         }
     }
     if (count > 0) {
-        console.log(`[Grav] Purged ${count} bad learning entries`);
+        console.log(`[Antigravity Auto Submit] Purged ${count} bad learning entries`);
         save();
     }
     return count;

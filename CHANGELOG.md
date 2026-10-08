@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.22
+
+- Rename the marketplace listing, command titles, dashboard, status bar, notifications and README to **Antigravity Auto Submit**. Add auto submit search keywords; retain `ANLE.grav`, `grav.*` and existing storage/configuration IDs for upgrades.
+- Use CDP browser pointer input for supported agent buttons in the attached document, inspired by the reference extension’s CDP path. Consume one renderer-owned ticket after live policy, intent and hit-target validation. Nested documents and injected fallback retain DOM activation.
+- Preserve attempted intents before input dispatch; unknown outcomes and legacy console retries cannot replay an approval. Add renderer, transport and real Chromium trusted-event checks.
+- Research the reference extension’s Windows-only UI Automation engine and document why its PowerShell helper cannot be used on macOS. No marketplace publication is included.
+
 ## 4.0.21
 
 - Dashboard UI polish: replace all emoji with inline SVG icons (`stroke="currentColor"`, `aria-hidden`), add footer with GitHub/star links and author credit, and add an `openExternal` host whitelist so the webview can only open the pinned repo and author profile URLs.

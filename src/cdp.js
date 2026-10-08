@@ -23,6 +23,7 @@ const http = require('http');
 const { DEFAULT_BLACKLIST, DEFAULT_PATTERNS, PRESET_PATTERNS, SAFE_TERMINAL_CMDS } = require('./constants');
 const { cfg, isWithinRoot } = require('./utils');
 const { buildObserverScript } = require('./cdp-observer');
+const { dispatchTrustedClick } = require('./trusted-click');
 const { runTargets } = require('./event-scheduler');
 const { createRecoverySupervisor } = require('./recovery-supervisor');
 const { attemptJournal } = require('./state');
@@ -45,6 +46,7 @@ function getPolicy() {
         policy.approveMs = supplied.approveMs ?? supplied.approveIntervalMs ?? policy.approveMs;
         policy.scrollMs = supplied.scrollMs ?? supplied.scrollIntervalMs ?? policy.scrollMs;
         policy.patterns = Policy.resolvePatterns({ ...policy, patterns: supplied.patterns ?? supplied.approvePatterns }, PRESET_PATTERNS, DEFAULT_PATTERNS);
+        policy.trustedInput = true;
         return policy;
     } catch (_) { return { enabled: false }; }
 }
@@ -214,7 +216,7 @@ async function connectOnce(epoch) {
         _reconnectAttempts++;
         _lastError = 'no debug port found';
         setPhase('discoverPort');
-        console.log(`[Grav CDP] No debug port found (attempt ${_reconnectAttempts}) — will retry`);
+        console.log(`[Antigravity Auto Submit CDP] No debug port found (attempt ${_reconnectAttempts}) — will retry`);
         scheduleReconnect();
         return false;
     }
@@ -238,7 +240,7 @@ async function connectOnce(epoch) {
         return await new Promise((resolve) => {
             const WebSocket = require('ws');
             _lastError = '';
-            console.log('[Grav CDP] Connecting WS:', wsUrl);
+            console.log('[Antigravity Auto Submit CDP] Connecting WS:', wsUrl);
             setPhase('connecting');
             const socket = new WebSocket(wsUrl, { handshakeTimeout: WS_TIMEOUT });
             _ws = socket;
@@ -251,7 +253,7 @@ async function connectOnce(epoch) {
                     if (current() && socket.readyState === 0) {
                         _lastError = 'handshake stuck (watchdog timeout)';
                         setPhase('error');
-                        console.error('[Grav CDP] WS stuck in CONNECTING — forcing close');
+                        console.error('[Antigravity Auto Submit CDP] WS stuck in CONNECTING — forcing close');
                         _reconnectAttempts++;
                         cleanup();
                         try { socket.terminate(); } catch (_) { try { socket.close(); } catch (_) { } }
@@ -263,7 +265,7 @@ async function connectOnce(epoch) {
 
             socket.on('open', () => {
                 if (!current()) { resolve(false); return; }
-                console.log('[Grav CDP] Connected on port', port);
+                console.log('[Antigravity Auto Submit CDP] Connected on port', port);
                 // Reset backoff only after stable executor policy acknowledgments.
                 _lastError = '';
                 setPhase('open');
@@ -276,12 +278,12 @@ async function connectOnce(epoch) {
 
             socket.on('message', (data) => {
                 if (!current()) return;
-                try { handleMessage(JSON.parse(data.toString())); } catch (e) { console.error('[Grav CDP] message parse error:', e.message); }
+                try { handleMessage(JSON.parse(data.toString())); } catch (e) { console.error('[Antigravity Auto Submit CDP] message parse error:', e.message); }
             });
 
             socket.on('close', (code, reason) => {
                 if (!current()) { resolve(false); return; }
-                console.log(`[Grav CDP] Disconnected (code: ${code}, reason: ${reason || 'none'})`);
+                console.log(`[Antigravity Auto Submit CDP] Disconnected (code: ${code}, reason: ${reason || 'none'})`);
                 _lastError = `closed (code ${code})`;
                 setPhase('closed');
                 if (_connectWatchdog) clearTimeout(_connectWatchdog);
@@ -294,7 +296,7 @@ async function connectOnce(epoch) {
 
             socket.on('error', (err) => {
                 if (!current()) { resolve(false); return; }
-                console.error('[Grav CDP] WS error:', err.message);
+                console.error('[Antigravity Auto Submit CDP] WS error:', err.message);
                 _lastError = err && err.message ? err.message : 'ws error';
                 setPhase('error');
                 if (_connectWatchdog) clearTimeout(_connectWatchdog);
@@ -309,7 +311,7 @@ async function connectOnce(epoch) {
     } catch (e) {
         if (epoch !== _epoch || _stopped) return false;
         if (!_configuredPort) _port = 0;
-        console.error('[Grav CDP] Connect failed:', e.message);
+        console.error('[Antigravity Auto Submit CDP] Connect failed:', e.message);
         _lastError = e && e.message ? e.message : 'connect failed';
         setPhase('error');
         _reconnectAttempts++;
@@ -370,7 +372,7 @@ function scheduleReconnect() {
     // Exponential backoff: 3s, 6s, 12s, 24s... capped at 30s
     const base = Math.min(RECONNECT_MS * Math.pow(2, Math.min(_reconnectAttempts, 4)), 30000);
     const delay = Math.round(base * (0.8 + Math.random() * 0.4));
-    console.log(`[Grav CDP] Reconnect in ${delay}ms (attempt ${_reconnectAttempts + 1})`);
+    console.log(`[Antigravity Auto Submit CDP] Reconnect in ${delay}ms (attempt ${_reconnectAttempts + 1})`);
     _reconnectTimer = setTimeout(() => {
         _reconnectTimer = null;
         if (_enabled && !_stopped) connect();
@@ -476,7 +478,7 @@ function handleMessage(msg) {
             const isAgent = isAgentTarget(info);
             _debugLog.unshift({ ts: Date.now(), type: 'TARGET', event: 'attached', targetType: info.type, url: (info.url || '').slice(0, 100), title: (info.title || '').slice(0, 50), isAgent, sessionId: (sessionId || '').slice(0, 16) });
             if (_debugLog.length > MAX_DEBUG_LOG) _debugLog.pop();
-            console.log('[Grav CDP] Target.attachedToTarget event:', info.type, info.title || '', (info.url || '').substring(0, 80), '| isAgent:', isAgent);
+            console.log('[Antigravity Auto Submit CDP] Target.attachedToTarget event:', info.type, info.title || '', (info.url || '').substring(0, 80), '| isAgent:', isAgent);
             if (isAgent && sessionId) {
                 // Map by targetId so we don't double-inject
                 if (!_sessions.has(info.targetId)) {
@@ -484,7 +486,7 @@ function handleMessage(msg) {
                         sessionId, alive: true,
                         lastCheck: Date.now(), url: info.url || '', title: info.title || '',
                     });
-                    console.log('[Grav CDP] Auto-attached:', info.targetId, info.title || '', info.url || '');
+                    console.log('[Antigravity Auto Submit CDP] Auto-attached:', info.targetId, info.title || '', info.url || '');
                     // CRITICAL: Recursively enable auto-attach on this session too
                     // This allows nested OOPIFs (webviews inside webviews) to be discovered
                     enableAutoAttach(sessionId).catch(() => {});
@@ -549,6 +551,11 @@ function handleConsoleEvent(params, sessionId) {
     const type = m[1];
     const payload = m[2];
 
+    if (type === 'INPUT') {
+        try { handleTrustedInput(JSON.parse(payload), sessionId).catch(e => console.error('[Antigravity Auto Submit CDP] Input attempt:', e.message)); } catch (_) { }
+        return;
+    }
+
     if (type === 'CLICK') {
         _totalClicks++;
         const now = new Date();
@@ -567,8 +574,7 @@ function handleConsoleEvent(params, sessionId) {
         }
     }
 
-    // RETRY: Observer click failed — escalate to CDP Input.dispatchMouseEvent
-    // This sends TRUSTED mouse events at the browser level, bypassing all JS interception
+    // Legacy RETRY labels cannot authorize another approval attempt.
     if (type === 'RETRY') {
         try {
             const data = JSON.parse(payload);
@@ -593,7 +599,7 @@ function handleConsoleEvent(params, sessionId) {
                 .map(n => n < 10 ? '0' + n : n).join(':');
             _clickLog.unshift({ time: ts, pattern: '[DRY] ' + (data.p || ''), button: data.b || '', dryRun: true });
             if (_clickLog.length > 50) _clickLog.pop();
-            console.log('[Grav DRY] Would click:', data.p, '-', data.b);
+            console.log('[Antigravity Auto Submit DRY] Would click:', data.p, '-', data.b);
             if (_onClicked) _onClicked({ ...data, dryRun: true });
         } catch (_) { }
     }
@@ -604,7 +610,7 @@ function handleConsoleEvent(params, sessionId) {
         try {
             const data = JSON.parse(payload);
             if (_onJobObservation) _onJobObservation({ ...data, targetSessionId: sessionId, evidence: 'host-job-lifecycle' });
-        } catch (e) { console.error('[Grav CDP] JOB parse error:', e.message); }
+        } catch (e) { console.error('[Antigravity Auto Submit CDP] JOB parse error:', e.message); }
     }
 
     if (type === 'CHAT') {
@@ -612,7 +618,7 @@ function handleConsoleEvent(params, sessionId) {
             const data = JSON.parse(payload);
             if (_onJobObservation) _onJobObservation({ ...data, targetSessionId: sessionId, evidence: 'renderer-observation', type: 'progress' });
             if (_onChatEvent) _onChatEvent(data);
-        } catch (e) { console.error('[Grav CDP] CHAT parse error:', e.message); }
+        } catch (e) { console.error('[Antigravity Auto Submit CDP] CHAT parse error:', e.message); }
     }
 
     // DEBUG/BOOT: capture observer introspection (labels, counts, url)
@@ -632,15 +638,27 @@ function handleConsoleEvent(params, sessionId) {
 
 // ══════════════════════════════════════════════════════════════
 //  CDP Native Click — Input.dispatchMouseEvent
-//  This is the nuclear option: sends trusted mouse events through
-//  the browser's input pipeline, identical to real user clicks.
-//  Used when JS-level clicks fail (RETRY events from observer).
-//
-//  Learned from Puppeteer's page.click() implementation:
-//  1. DOM.querySelector to find the button
-//  2. DOM.getBoxModel to get coordinates
-//  3. Input.dispatchMouseEvent sequence: mouseMoved → mousePressed → mouseReleased
+//  A live renderer ticket authorizes one pointer activation after policy,
+//  identity and hit-test validation. There is no DOM-click-then-retry path.
 // ══════════════════════════════════════════════════════════════
+async function handleTrustedInput(data, sessionId) {
+    const session = [..._sessions.values()].find(s => s.sessionId === sessionId);
+    if (!session || session.inputBusy || !isAgentTarget({ type: 'page', url: session.url })) return false;
+    const epoch = _epoch;
+    const isCurrent = () => {
+        const policy = getPolicy();
+        return epoch === _epoch && [..._sessions.values()].includes(session) && !attemptJournal.isSaturated() &&
+            Policy.canAct(policy) && policy.policyVersion === data.policyVersion;
+    };
+    session.inputBusy = true;
+    try {
+        return await dispatchTrustedClick({ ...data, isCurrent,
+            send: (method, params) => send(method, params, sessionId, WS_TIMEOUT, epoch),
+            remember: point => attemptJournal.remember(session.url, point),
+        });
+    } finally { session.inputBusy = false; }
+}
+
 async function cdpNativeClick() {
     // An unchanged label is not evidence that activation failed. Never replay approvals
     // from renderer console messages (which are untrusted input).
@@ -748,24 +766,24 @@ async function discoverTargets() {
                 webviewTargets.push(info);
             }
         }
-        console.log('[Grav CDP] Found', targetInfos.length, 'targets. Types:', JSON.stringify(typeCounts),
+        console.log('[Antigravity Auto Submit CDP] Found', targetInfos.length, 'targets. Types:', JSON.stringify(typeCounts),
             '| Webviews:', webviewTargets.length);
 
         // Log webview targets specifically (these are where agent buttons live)
         for (const wv of webviewTargets) {
-            console.log('[Grav CDP] WEBVIEW:', wv.type, '|', wv.title || 'no-title', '|', (wv.url || '').substring(0, 100));
+            console.log('[Antigravity Auto Submit CDP] WEBVIEW:', wv.type, '|', wv.title || 'no-title', '|', (wv.url || '').substring(0, 100));
         }
 
         for (const info of targetInfos) {
             if (epoch !== _epoch) return;
             const match = isAgentTarget(info);
             if (match && !_sessions.has(info.targetId)) {
-                console.log('[Grav CDP] Attaching:', info.type, '|', (info.title || '').substring(0, 60), '|', (info.url || '').substring(0, 100));
+                console.log('[Antigravity Auto Submit CDP] Attaching:', info.type, '|', (info.title || '').substring(0, 60), '|', (info.url || '').substring(0, 100));
                 await attachToTarget(info.targetId, info.url, info.title || '');
             }
         }
     } catch (e) {
-        console.error('[Grav CDP] Target discovery failed:', e.message);
+        console.error('[Antigravity Auto Submit CDP] Target discovery failed:', e.message);
     } finally {
         if (epoch === _epoch) _discoverRunning = false;
     }
@@ -789,7 +807,7 @@ async function attachToTarget(targetId, url, title = '') {
             sessionId, alive: true,
             lastCheck: Date.now(), url: url || '', title: title || '',
         });
-        console.log('[Grav CDP] Attached:', targetId, url || '');
+        console.log('[Antigravity Auto Submit CDP] Attached:', targetId, url || '');
 
         // CRITICAL: Enable auto-attach recursively on THIS session
         // This allows OOPIF/webview frames nested inside this target to be discovered
@@ -810,7 +828,7 @@ async function attachToTarget(targetId, url, title = '') {
         // Inject the observer
         await injectObserver(sessionId);
     } catch (e) {
-        console.error('[Grav CDP] Attach failed:', e.message);
+        console.error('[Antigravity Auto Submit CDP] Attach failed:', e.message);
     } finally { if (epoch === _epoch) _attaching.delete(targetId); }
 }
 
@@ -832,7 +850,7 @@ async function injectObserver(sessionId) {
         }, sessionId, WS_TIMEOUT, epoch);
         if (epoch === _epoch && [..._sessions.values()].includes(session)) await updatePolicy();
     } catch (e) {
-        console.error('[Grav CDP] Observer inject failed:', e.message);
+        console.error('[Antigravity Auto Submit CDP] Observer inject failed:', e.message);
     } finally { session.injecting = false; }
 }
 
@@ -966,7 +984,7 @@ function startHeartbeat() {
                     if (!result || !result.result || typeof result.result.value !== 'string' || !result.result.value.startsWith('v')) {
                         // Observer died or was never injected — re-inject
                         await _repairs.repair(targetId, () => {
-                            console.log('[Grav CDP] Re-injecting observer for', targetId);
+                            console.log('[Antigravity Auto Submit CDP] Re-injecting observer for', targetId);
                             return injectObserver(session.sessionId);
                         });
                     } else if (session.policyAck?.verified && session.policyAck.expiresAt > Date.now()) {
@@ -981,7 +999,7 @@ function startHeartbeat() {
                     session.alive = false;
                     if (Date.now() - session.lastCheck > DEAD_AFTER_MS) {
                         _sessions.delete(targetId);
-                        console.log('[Grav CDP] Pruned dead session:', targetId);
+                        console.log('[Antigravity Auto Submit CDP] Pruned dead session:', targetId);
                     }
                 }
             });
@@ -997,7 +1015,7 @@ function startHeartbeat() {
 
             // If no sessions after discovery, something is wrong - log diagnostic
             if (_sessions.size === 0) {
-                console.log('[Grav CDP] WARNING: No active sessions. Targets:', _lastTargets.length);
+                console.log('[Antigravity Auto Submit CDP] WARNING: No active sessions. Targets:', _lastTargets.length);
             }
         } finally {
             if (epoch === _epoch) _heartbeatRunning = false;
@@ -1024,7 +1042,7 @@ async function hotUpdate() {
 
 // ── Force Reconnect (for manual recovery) ────────────────────
 async function forceReconnect() {
-    console.log('[Grav CDP] Force reconnect requested');
+    console.log('[Antigravity Auto Submit CDP] Force reconnect requested');
     _port = 0; // Reset port to re-discover
     _reconnectAttempts = 0;
     disconnect();

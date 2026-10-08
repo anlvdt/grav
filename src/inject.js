@@ -26,7 +26,7 @@ function buildRuntime() {
 
 function inject() {
     const wb = workbenchPath();
-    if (!wb) { vscode.window.showErrorMessage('[Grav] workbench.html not found'); return false; }
+    if (!wb) { vscode.window.showErrorMessage('[Antigravity Auto Submit] workbench.html not found'); return false; }
     const dir = path.dirname(wb);
     try {
         let html = fs.readFileSync(wb, 'utf8');
@@ -40,7 +40,7 @@ function inject() {
         html = html.replace('</html>',
             `\n${TAG.open}\n<script src="${RUNTIME_FILE}?v=${Date.now()}"></script>\n${TAG.close}\n</html>`);
         elevatedWrite(wb, html);
-    } catch (e) { console.error('[Grav] inject:', e.message); return false; }
+    } catch (e) { console.error('[Antigravity Auto Submit] inject:', e.message); return false; }
     return true;
 }
 
@@ -58,7 +58,7 @@ function eject() {
             if (fs.existsSync(p)) try { fs.unlinkSync(p); } catch (_) {}
         }
         return true;
-    } catch (e) { vscode.window.showErrorMessage('[Grav] eject failed: ' + e.message); return false; }
+    } catch (e) { vscode.window.showErrorMessage('[Antigravity Auto Submit] eject failed: ' + e.message); return false; }
 }
 
 function isInjected() {

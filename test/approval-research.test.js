@@ -14,11 +14,11 @@ const source = fs.readFileSync(require.resolve('../media/runtime.js'), 'utf8').r
 check('Policy hardening replaces the previous observer instead of reusing its evaluator', () => {
     const f = fixture(), policy = { ...base, permissionProfile: 'legacy' };
     const script = buildObserverScript(policy.patterns, policy.blacklist, false, 7000, false, false, policy);
-    vm.runInContext(script.replaceAll('v4.0.23-autopilot', 'v4.0.21-ledger'), f.context);
+    vm.runInContext(script.replaceAll('v4.0.22-trusted-input', 'v4.0.23-autopilot'), f.context);
     const previous = f.window.__gravObserver;
     vm.runInContext(script, f.context);
     assert.notEqual(f.window.__gravObserver, previous);
-    assert.equal(f.window.__gravObserver.version, 'v4.0.23-autopilot');
+    assert.equal(f.window.__gravObserver.version, 'v4.0.22-trusted-input');
 });
 function load(executor, f, policy) {
     if (executor === 'cdp') vm.runInContext(buildObserverScript(policy.patterns, policy.blacklist, false, 7000, false, false, policy), f.context);

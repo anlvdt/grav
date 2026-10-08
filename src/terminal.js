@@ -101,7 +101,7 @@ function setup(ctx, learning, opts = {}) {
                             const lastFix = _autoFixedCmds.get(fixKey) || 0;
                             if (Date.now() - lastFix > 10000) {
                                 _autoFixedCmds.set(fixKey, Date.now());
-                                console.log(`[Grav] Auto-Fix suggestion: ${fixedCmd}`);
+                                console.log(`[Antigravity Auto Submit] Auto-Fix suggestion: ${fixedCmd}`);
 
                                 // Suggestions are the default; explicit permission is required for execution.
                                 const policy = getPolicy();

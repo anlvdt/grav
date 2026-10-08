@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{NONCE}}'; img-src data:; font-src data:;">
-<title>Grav Dashboard</title>
+<title>Antigravity Auto Submit Dashboard</title>
 
 <style>
 :root {
@@ -515,7 +515,7 @@ body.vscode-light, body.vscode-high-contrast-light {
     <div class="hdr-brand">
       <div class="hdr-icon">G</div>
       <div class="hdr-info">
-        <div class="hdr-name">Grav Dashboard</div>
+        <div class="hdr-name">Antigravity Auto Submit Dashboard</div>
         <div class="hdr-ver">v{{VERSION}} — Autopilot for Antigravity</div>
       </div>
     </div>
@@ -552,7 +552,7 @@ body.vscode-light, body.vscode-high-contrast-light {
           <div><dt>Scope</dt><dd id="decisionScope">—</dd></div>
           <div><dt>Outcome</dt><dd id="decisionOutcome">—</dd></div>
         </dl>
-        <div class="help-text">A decision is the policy result. “Click attempted” means Grav tried the click; it does not confirm the command succeeded. <button type="button" class="link-btn" id="btnDecisionDetails">View trace details</button></div>
+        <div class="help-text">A decision is the policy result. “Click attempted” means Antigravity Auto Submit tried the click; it does not confirm the command succeeded. <button type="button" class="link-btn" id="btnDecisionDetails">View trace details</button></div>
       </div>
     </div>
 
@@ -873,7 +873,7 @@ body.vscode-light, body.vscode-high-contrast-light {
   <!-- FOOTER -->
   <footer class="footer">
     <div class="footer-left">
-      <span class="footer-name">Grav</span>
+      <span class="footer-name">Antigravity Auto Submit</span>
       <span class="footer-sep">·</span>
       <span class="footer-author">by <button class="footer-link footer-btn" id="linkAuthor" type="button" data-url="https://github.com/anlvdt">An Le</button></span>
     </div>
@@ -1110,6 +1110,7 @@ bindExternalLink('linkStar', 'https://github.com/anlvdt/grav');
     const author = $('linkAuthor');
     if (author) author.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://github.com/anlvdt' }));
 }
+let _toastTimer = null;
 function showToast(msg, ok, type) {
     if (_toastTimer) clearTimeout(_toastTimer);
     const t = $('toast');

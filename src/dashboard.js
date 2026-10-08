@@ -51,7 +51,7 @@ function toggle(ctx, deps) {
 
     const mediaPath = vscode.Uri.file(path.join(_ctx.extensionPath, 'media'));
     _panel = vscode.window.createWebviewPanel(
-        'gravDashboard', 'Grav — Dashboard',
+        'gravDashboard', 'Antigravity Auto Submit — Dashboard',
         vscode.ViewColumn.One, {
             enableScripts: true,
             localResourceRoots: [mediaPath],

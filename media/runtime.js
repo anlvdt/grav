@@ -526,5 +526,5 @@
 
     if (initialPolicy) applyConfig(initialPolicy);
     window.__gravLoaded = true;
-    console.log('[Grav] Runtime v3.0 loaded | Patterns:', PATTERNS.length);
+    console.log('[Antigravity Auto Submit] Runtime v3.0 loaded | Patterns:', PATTERNS.length);
 })();

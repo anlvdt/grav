@@ -152,7 +152,7 @@ function createPolicy(builtInGrants = [], createCoordinator, createEventSchedule
             if (typeof match === 'string' && ['invalid blacklist', 'invalid blacklist regex', 'unsafe blacklist regex', 'unknown command'].includes(match)) return result('manual', 'invalid-policy', match);
             if (match) denied.push({ type: 'blacklist', pattern });
         }
-        if (denied.length) return result('deny', 'blacklist-match', 'Grav will not auto-approve this command; host execution permissions are unchanged.', denied, { type: 'command' });
+        if (denied.length) return result('deny', 'blacklist-match', 'Antigravity Auto Submit will not auto-approve this command; host execution permissions are unchanged.', denied, { type: 'command' });
         if (!argv) return result('manual', 'unsupported-syntax', 'Only a single literal argv command is supported; review shell syntax manually.');
         if (policy.permissionProfile === 'observe' || policy.permissionProfile === 'edits') return result('manual', 'permission-profile', 'This profile does not grant terminal approvals.');
         if (['env', 'time', 'nohup', 'sudo', 'command', 'exec'].includes(argv[0])) return result('manual', 'wrapper-command', 'Wrapper semantics require manual review.');
@@ -302,7 +302,7 @@ function createPolicy(builtInGrants = [], createCoordinator, createEventSchedule
     }
     function runtimeState(policy = {}, executor = {}) {
         let status, reasonCode, reason;
-        if (policy.enabled !== true || policy.active === false) { status = 'off'; reasonCode = 'disabled'; reason = 'Grav is off.'; }
+        if (policy.enabled !== true || policy.active === false) { status = 'off'; reasonCode = 'disabled'; reason = 'Antigravity Auto Submit is off.'; }
         else if (policy.paused) { status = 'paused'; reasonCode = policy.pauseReasonCode || 'manual-pause'; reason = policy.pauseReason || 'Manual pause.'; }
         else if (policy.dryRun || policy.permissionProfile === 'observe') { status = 'dry-run'; reasonCode = 'dry-run'; reason = 'Scan only; no auto-approval attempts.'; }
         else if (executor.connected === false) { status = 'disconnected'; reasonCode = 'executor-disconnected'; reason = 'Executor is disconnected.'; }

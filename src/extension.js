@@ -67,7 +67,7 @@ const getState = () => ({
 const getPolicy = () => {
     const config = getEffectiveConfig(_ctx);
     const pauseReasonCode = _acceptPaused ? 'manual-pause' : !idle.isIdle() ? 'typing' : dashboard.getPanel()?.visible ? 'dashboard' : null;
-    const pauseReason = { 'manual-pause': 'Manual pause.', typing: 'Paused while the user is typing.', dashboard: 'Paused while the Grav dashboard is visible.' }[pauseReasonCode] || null;
+    const pauseReason = { 'manual-pause': 'Manual pause.', typing: 'Paused while the user is typing.', dashboard: 'Paused while the Antigravity Auto Submit dashboard is visible.' }[pauseReasonCode] || null;
     return withPolicyVersion({ ...config, enabled: _active && _enabled && config.enabled, paused: !!pauseReasonCode, pauseReasonCode, pauseReason,
         interactionHost: _interactionHost, resumeToken: _resumeToken, patterns: config.approvePatterns, blacklist: [...new Set([...DEFAULT_BLACKLIST, ...config.terminalBlacklist])], scrollEnabled: _scrollOn });
 };
@@ -108,10 +108,10 @@ const refreshBar = () => {
 
     const runtime = getRuntime();
     const icons = { off: 'circle-slash', paused: 'debug-pause', 'dry-run': 'eye', disconnected: 'debug-disconnect', ready: 'rocket', unknown: 'question' };
-    _sbMain.text = `$(${icons[runtime.status]}) Grav`;
+    _sbMain.text = `$(${icons[runtime.status]}) Antigravity Auto Submit`;
     _sbMain.color = runtime.status === 'ready' ? '#6ee7b7' : runtime.status === 'off' ? '#f87171' : '#fbbf24';
     _sbMain.backgroundColor = runtime.status === 'off' ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
-    _sbMain.tooltip = `Grav [${runtime.status}] | ${runtime.reason} | ${_totalClicks} click attempts — click to open menu`;
+    _sbMain.tooltip = `Antigravity Auto Submit [${runtime.status}] | ${runtime.reason} | ${_totalClicks} click attempts — click to open menu`;
 
     // ── CDP: connection + scroll ──
     if (_sbCdp) {
@@ -223,7 +223,7 @@ const onPatternsDiscovered = (patterns) => {
     for (const p of patterns) { if (!discovered.includes(p) && !DEFAULT_PATTERNS.includes(p)) { discovered.push(p); changed = true; } }
     if (changed && _ctx) {
         _ctx.globalState.update('discoveredPatterns', discovered.slice(-50));
-        vscode.window.showInformationMessage(`[Grav] Discovered: ${patterns.slice(0, 3).join(', ')}`, 'Add to auto-click', 'Ignore').then(async pick => {
+        vscode.window.showInformationMessage(`[Antigravity Auto Submit] Discovered: ${patterns.slice(0, 3).join(', ')}`, 'Add to auto-click', 'Ignore').then(async pick => {
             if (pick !== 'Add to auto-click' || !_active) return;
             const currentPatterns = [...getEffectiveConfig(_ctx).approvePatterns];
             const disabled = _ctx.globalState.get('disabledPatterns', []).map(p => p.toLowerCase());
@@ -233,7 +233,7 @@ const onPatternsDiscovered = (patterns) => {
             await config.update('presetMode', 'custom', vscode.ConfigurationTarget.Global);
             await config.update('operationMode', 'custom', vscode.ConfigurationTarget.Global);
             onSave();
-        }).catch(e => console.warn('[Grav] Pattern update failed:', e.message));
+        }).catch(e => console.warn('[Antigravity Auto Submit] Pattern update failed:', e.message));
     }
 };
 const onSave = () => { syncPolicy(); startAcceptLoop(); refreshBar(); maybeTraceFilteredNative('save'); publishTrace(); };
@@ -252,9 +252,9 @@ const loadProjectConfig = () => {
             const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
             _projectPatterns = Array.isArray(raw.patterns) ? raw.patterns.filter(p => typeof p === 'string' && p.length > 0 && p.length <= 60) : [];
             _projectConfig = { patterns: _projectPatterns, blacklist: Array.isArray(raw.blacklist) ? raw.blacklist.filter(p => typeof p === 'string' && p.length <= 500) : [], dryRun: raw.dryRun === true };
-            if (_projectPatterns.length > 0) console.log(`[Grav] Project patterns (${_projectPatterns.length}):`, _projectPatterns.slice(0, 5));
+            if (_projectPatterns.length > 0) console.log(`[Antigravity Auto Submit] Project patterns (${_projectPatterns.length}):`, _projectPatterns.slice(0, 5));
         } else { _projectPatterns = []; _projectConfig = {}; }
-    } catch (e) { _projectPatterns = []; _projectConfig = {}; console.warn('[Grav] grav.json parse error:', e.message); }
+    } catch (e) { _projectPatterns = []; _projectConfig = {}; console.warn('[Antigravity Auto Submit] grav.json parse error:', e.message); }
 };
 
 const getDynamicAcceptPolicy = () => ({
@@ -396,7 +396,7 @@ const discoverAcceptCommands = async () => {
     try {
         const allCmds = await vscode.commands.getCommands(true);
         _dynamicAcceptCmds = deriveDynamicAcceptCommands(allCmds);
-        console.log(`[Grav] Discovered ${_dynamicAcceptCmds.length} accept commands:`, _dynamicAcceptCmds.slice(0, 10));
+        console.log(`[Antigravity Auto Submit] Discovered ${_dynamicAcceptCmds.length} accept commands:`, _dynamicAcceptCmds.slice(0, 10));
     } catch (_) { /* non-critical */ }
 };
 
@@ -452,7 +452,7 @@ async function activate(ctx) {
     if (learning.setPolicyProvider) learning.setPolicyProvider(getPolicy);
     setProjectProvider(() => _projectConfig);
     _isAntigravity = isAntigravity();
-    console.log(`[Grav] IDE: "${vscode.env.appName}" | Antigravity: ${_isAntigravity}`);
+    console.log(`[Antigravity Auto Submit] IDE: "${vscode.env.appName}" | Antigravity: ${_isAntigravity}`);
     // Native VS Code commands remain available; installation patching is IDE-specific.
 
     _stats = ctx.globalState.get('stats', {});
@@ -473,7 +473,7 @@ async function activate(ctx) {
         await vscode.workspace.getConfiguration('grav').update('operationMode', 'custom', vscode.ConfigurationTarget.Global);
         await ctx.globalState.update('disabledPatterns', [...RISKY_PATTERNS]);
 
-        vscode.window.showInformationMessage('Welcome to Grav! Autopilot for Antigravity installed.', 'Open Dashboard').then(pick => {
+        vscode.window.showInformationMessage('Welcome to Antigravity Auto Submit! Autopilot for Antigravity installed.', 'Open Dashboard').then(pick => {
             if (pick === 'Open Dashboard') vscode.commands.executeCommand('grav.dashboard');
         });
     } else if (Array.isArray(userPatterns)) {
@@ -492,7 +492,7 @@ async function activate(ctx) {
         const cleaned = curPatterns.filter(p => !REVIEW_REMOVE.includes(p));
         if (cleaned.length !== curPatterns.length) {
             await vscode.workspace.getConfiguration('grav').update('approvePatterns', cleaned, vscode.ConfigurationTarget.Global);
-            console.log('[Grav] Migration: removed Review Changes from patterns');
+            console.log('[Antigravity Auto Submit] Migration: removed Review Changes from patterns');
         }
     }
 
@@ -507,24 +507,24 @@ async function activate(ctx) {
     // Auto-purge bad learning entries on startup (numbers, flags, versions learned incorrectly)
     setTimeout(() => {
         const purged = learning.purgeBadEntries();
-        if (purged > 0) console.log(`[Grav] Auto-purged ${purged} bad learning entries on startup`);
+        if (purged > 0) console.log(`[Antigravity Auto Submit] Auto-purged ${purged} bad learning entries on startup`);
     }, 3000);
     roi.init(ctx);
 
-    idle.init(ctx, { onIdleChange: (isIdle) => { console.log('[Grav] Idle:', isIdle); dashboard.postMessage({ command: 'idleChanged', idle: isIdle }); syncPolicy(); refreshBar(); } });
+    idle.init(ctx, { onIdleChange: (isIdle) => { console.log('[Antigravity Auto Submit] Idle:', isIdle); dashboard.postMessage({ command: 'idleChanged', idle: isIdle }); syncPolicy(); refreshBar(); } });
 
     // CDP + Injection
     if (_isAntigravity && _enabled && cfg('cdpEnabled', true)) {
         try {
             const result = require('./argv').ensureCdpInArgv({ appRoot: vscode.env.appRoot, port: cfg('cdpPort', 9333) });
-            if (result.changed) vscode.window.showInformationMessage('[Grav] CDP configured. Quit & restart the IDE fully.', 'OK');
-        } catch (e) { console.warn('[Grav] CDP profile unchanged:', e.message); }
+            if (result.changed) vscode.window.showInformationMessage('[Antigravity Auto Submit] CDP configured. Quit & restart the IDE fully.', 'OK');
+        } catch (e) { console.warn('[Antigravity Auto Submit] CDP profile unchanged:', e.message); }
     }
     if (cdp && _isAntigravity) {
         cdp.init({
             getPolicy, onJobObservation,
             onBlocked: (cmd, reason, metadata = {}) => {
-                console.log(`[Grav Safety] Blocked: ${reason}`);
+                console.log(`[Antigravity Auto Submit Safety] Blocked: ${reason}`);
                 recordTrace({ ...metadata, source: 'cdp', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
                 dashboard.postMessage({ command: 'commandBlocked', cmd: cmd.slice(0, 200), reason });
             },
@@ -567,7 +567,7 @@ async function activate(ctx) {
                     injection.patchChecksums();
                 }
             } else injection.hotUpdateRuntime(ctx);
-        } catch (e) { console.error('[Grav] inject:', e.message); }
+        } catch (e) { console.error('[Antigravity Auto Submit] inject:', e.message); }
     }
 
     // Bridge
@@ -576,7 +576,7 @@ async function activate(ctx) {
         onStatsUpdated, onClickLogged, onChatEvent, onJobObservation,
         onTerminalEvent, onPatternsDiscovered,
         onCommandBlocked: (cmd, reason, metadata = {}) => {
-            console.log(`[Grav Safety] Blocked: ${reason}`);
+            console.log(`[Antigravity Auto Submit Safety] Blocked: ${reason}`);
             recordTrace({ ...metadata, source: 'bridge', action: 'blocked', label: reason, cmd: cmd.slice(0, 200), reason });
             dashboard.postMessage({ command: 'commandBlocked', cmd: cmd.slice(0, 200), reason });
         },
@@ -587,7 +587,7 @@ async function activate(ctx) {
     maybeTraceFilteredNative('activate');
     startAcceptLoop();
     if (_isAntigravity) injection.writeRuntimeConfig(ctx);
-    try { terminal.setup(ctx, learning, { getPolicy }); } catch (e) { console.warn('[Grav] terminal.setup skipped:', e.message); }
+    try { terminal.setup(ctx, learning, { getPolicy }); } catch (e) { console.warn('[Antigravity Auto Submit] terminal.setup skipped:', e.message); }
 
     // Status bar — multiple items
     const SB_BASE = -10000;
@@ -648,7 +648,7 @@ async function activate(ctx) {
             if (cdp) await cdp.disconnect();
             if (_isAntigravity && injection.eject()) {
                 await ctx.globalState.update('grav-version', '0');
-                vscode.window.showInformationMessage('[Grav] Runtime removed. Restart the IDE to unload the renderer script.');
+                vscode.window.showInformationMessage('[Antigravity Auto Submit] Runtime removed. Restart the IDE to unload the renderer script.');
             }
         }),
         vscode.commands.registerCommand('grav.statusMenu', async () => {
@@ -662,7 +662,7 @@ async function activate(ctx) {
                 { label: _skipBrowserAgent ? '$(debug-step-over) Browser Skip: ON' : '$(debug-step-over) Browser Skip: OFF', description: 'Auto-skip browser subagent steps', command: 'grav.toggleSkipBrowserAgent' },
                 { label: `$(settings-gear) Operation Mode: ${operationMode}`, description: 'Apply Safe / Balanced / Fast preset', command: 'grav.applyOperationPreset' },
             ];
-            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Grav Menu' });
+            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Antigravity Auto Submit Menu' });
             if (pick) vscode.commands.executeCommand(pick.command);
         }),
         vscode.commands.registerCommand('grav.dashboard', () => dashboard.toggle(ctx, {
@@ -683,7 +683,7 @@ async function activate(ctx) {
             const trace = getTraceSnapshot();
 
             const lines = [
-                `Grav v${ctx.extension?.packageJSON?.version || '0'}`,
+                `Antigravity Auto Submit v${ctx.extension?.packageJSON?.version || '0'}`,
                 `Platform: ${process.platform}`,
                 `Capabilities: ${JSON.stringify(trace.capabilities)}`,
                 `Pilot metrics: ${JSON.stringify(trace.metrics)}`,
@@ -728,7 +728,7 @@ async function activate(ctx) {
                     : `No conflicts detected ✓`,
                 ``,
                 `── Observer Debug Log (last ${debugLog.length}) ──`,
-                ...(debugLog.length ? debugLog.slice(0, 15).map(d => `  [${d.type}] ${JSON.stringify(d).slice(0, 120)}`) : ['  (no debug events yet — run Grav: Refresh Observer to trigger)']),
+                ...(debugLog.length ? debugLog.slice(0, 15).map(d => `  [${d.type}] ${JSON.stringify(d).slice(0, 120)}`) : ['  (no debug events yet — run Antigravity Auto Submit: Refresh Observer to trigger)']),
                 ``,
                 `── Decision Trace (last ${trace.trace.length}) ──`,
                 ...(trace.trace.length ? trace.trace.slice(0, 12).map(t => `  [${t.time}] ${t.source}/${t.action} ${t.label || t.cmd || ''} ${t.reason ? `— ${t.reason}` : ''}`) : ['  (no trace events yet)']),
@@ -741,8 +741,8 @@ async function activate(ctx) {
             const pick = await vscode.window.showQuickPick(actions, { placeHolder: 'Manage Terminal Commands' });
             if (!pick) return;
             if (pick.action === 'rules') { await manageRules(vscode, ctx, getPolicy); syncPolicy(); }
-            else if (pick.action === 'addWhite') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter executable (broad legacy grant) or literal argv prefix to grant' }); if (cmd) { const wl = cfg('terminalWhitelist', []); wl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalWhitelist', wl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Grav] Added "${cmd}" to Whitelist.`); } }
-            else if (pick.action === 'addBlack') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter dangerous command' }); if (cmd) { const bl = cfg('terminalBlacklist', []); bl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalBlacklist', bl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Grav] Added "${cmd}" to Blacklist.`); } }
+            else if (pick.action === 'addWhite') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter executable (broad legacy grant) or literal argv prefix to grant' }); if (cmd) { const wl = cfg('terminalWhitelist', []); wl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalWhitelist', wl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Antigravity Auto Submit] Added "${cmd}" to Whitelist.`); } }
+            else if (pick.action === 'addBlack') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter dangerous command' }); if (cmd) { const bl = cfg('terminalBlacklist', []); bl.push(cmd); await vscode.workspace.getConfiguration('grav').update('terminalBlacklist', bl, vscode.ConfigurationTarget.Global); vscode.window.showInformationMessage(`[Antigravity Auto Submit] Added "${cmd}" to Blacklist.`); } }
             else if (pick.action === 'test') { const cmd = await vscode.window.showInputBox({ prompt: 'Enter command to test' }); if (cmd) { const result = learning.evaluateCommand(cmd); const doc = await vscode.workspace.openTextDocument({ content: `${result.decision.toUpperCase()}\nReason: ${result.reason}\nReason code: ${result.reasonCode}\nScope: ${JSON.stringify(result.scope)}\nMatched rules: ${JSON.stringify(result.matchedRules)}\nPolicy version: ${result.policyVersion}`, language: 'text' }); await vscode.window.showTextDocument(doc); } }
             else if (pick.action === 'viewAll') { const doc = await vscode.workspace.openTextDocument({ content: `── Whitelist ──\n${cfg('terminalWhitelist', []).join('\n')}\n\n── Blacklist ──\n${cfg('terminalBlacklist', []).join('\n')}`, language: 'text' }); await vscode.window.showTextDocument(doc); }
         }),
@@ -757,13 +757,13 @@ async function activate(ctx) {
             if (await require('./autopilot-profile').configureProfile(vscode)) syncPolicy();
         }),
         vscode.commands.registerCommand('grav.permissionProfile', async () => {
-            const profile = await vscode.window.showQuickPick([{label:'Observe',id:'observe',description:'No automatic approvals'},{label:'Edits',id:'edits',description:'Command-free edit/UI actions; terminal, browser and MCP approvals require manual review'},{label:'Terminal',id:'terminal',description:'Edits plus scoped exact/prefix rules only; legacy grants are inactive'},{label:'Legacy',id:'legacy',description:'Preserve existing P0 label/grant behavior'}], {placeHolder:'Grav permission profile, independent of scan speed'});
+            const profile = await vscode.window.showQuickPick([{label:'Observe',id:'observe',description:'No automatic approvals'},{label:'Edits',id:'edits',description:'Command-free edit/UI actions; terminal, browser and MCP approvals require manual review'},{label:'Terminal',id:'terminal',description:'Edits plus scoped exact/prefix rules only; legacy grants are inactive'},{label:'Legacy',id:'legacy',description:'Preserve existing P0 label/grant behavior'}], {placeHolder:'Antigravity Auto Submit permission profile, independent of scan speed'});
             if (!profile) return;
             await vscode.workspace.getConfiguration('grav').update('permissionProfile', profile.id, vscode.ConfigurationTarget.Global); syncPolicy();
         }),
         vscode.commands.registerCommand('grav.learnStats', async () => {
             const stats = learning.getStats();
-            if (stats.commands.length === 0) { vscode.window.showInformationMessage('[Grav] No learning data yet'); return; }
+            if (stats.commands.length === 0) { vscode.window.showInformationMessage('[Antigravity Auto Submit] No learning data yet'); return; }
             const rows = stats.commands.map(s => `${s.cmd.padEnd(22)} suggestion-score:${String(s.candidateScore).padEnd(7)} obs:${String(s.obs).padEnd(5)} ${s.status}`);
             const doc = await vscode.workspace.openTextDocument({ content: `Candidate suggestions only — scores are not probabilities or authorization.\nEpoch: ${stats.epoch} | Tracking: ${stats.totalTracked}\n\n${rows.join('\n')}`, language: 'text' });
             await vscode.window.showTextDocument(doc);
@@ -774,41 +774,41 @@ async function activate(ctx) {
                 description: preset.description,
                 mode: preset.id,
             }));
-            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Select Grav operation mode' });
+            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Select Antigravity Auto Submit operation mode' });
             if (!pick) return;
             const ok = await applyOperationPreset(pick.mode, 'command');
-            if (ok) vscode.window.showInformationMessage(`[Grav] Applied ${pick.label} mode.`);
+            if (ok) vscode.window.showInformationMessage(`[Antigravity Auto Submit] Applied ${pick.label} mode.`);
         }),
         vscode.commands.registerCommand('grav.recordFalsePositive', async (meta = {}) => {
             try { recordFeedback('falsePositive', { ...meta, reason: 'manual feedback' }); } catch (e) { vscode.window.showWarningMessage(e.message); return { error: e.message }; }
-            vscode.window.showInformationMessage('[Grav] Logged local feedback: false positive.');
+            vscode.window.showInformationMessage('[Antigravity Auto Submit] Logged local feedback: false positive.');
         }),
         vscode.commands.registerCommand('grav.recordMissedAction', async (meta = {}) => {
             try { recordFeedback('falseNegative', { ...meta, reason: 'manual feedback' }); } catch (e) { vscode.window.showWarningMessage(e.message); return { error: e.message }; }
-            vscode.window.showInformationMessage('[Grav] Logged local feedback: missed click.');
+            vscode.window.showInformationMessage('[Antigravity Auto Submit] Logged local feedback: missed click.');
         }),
-        vscode.commands.registerCommand('grav.refreshObserver', async () => { if (!cdp || !cdp.isConnected()) { vscode.window.showWarningMessage('[Grav] CDP not connected.'); return; } cdp.hotUpdate(); vscode.window.showInformationMessage('[Grav] Observer refreshed.'); }),
+        vscode.commands.registerCommand('grav.refreshObserver', async () => { if (!cdp || !cdp.isConnected()) { vscode.window.showWarningMessage('[Antigravity Auto Submit] CDP not connected.'); return; } cdp.hotUpdate(); vscode.window.showInformationMessage('[Antigravity Auto Submit] Observer refreshed.'); }),
         vscode.commands.registerCommand('grav.forceReconnect', async () => {
-            vscode.window.showInformationMessage('[Grav] Force reconnecting CDP...');
+            vscode.window.showInformationMessage('[Antigravity Auto Submit] Force reconnecting CDP...');
             if (cdp && _isAntigravity && cdp.forceReconnect) {
                 const ok = await cdp.forceReconnect();
-                if (ok) vscode.window.showInformationMessage('[Grav] CDP reconnected successfully.');
-                else vscode.window.showWarningMessage('[Grav] CDP reconnect failed. Check Output panel.');
+                if (ok) vscode.window.showInformationMessage('[Antigravity Auto Submit] CDP reconnected successfully.');
+                else vscode.window.showWarningMessage('[Antigravity Auto Submit] CDP reconnect failed. Check Output panel.');
             }
         }),
-        vscode.commands.registerCommand('grav.pauseAccept', () => { _acceptPaused = true; syncPolicy(); vscode.window.showInformationMessage('[Grav] Auto-accept paused.'); refreshBar(); }),
-        vscode.commands.registerCommand('grav.resumeAccept', () => { _acceptPaused = false; _resumeToken++; syncPolicy(); vscode.window.showInformationMessage('[Grav] Auto-accept resumed.'); refreshBar(); }),
+        vscode.commands.registerCommand('grav.pauseAccept', () => { _acceptPaused = true; syncPolicy(); vscode.window.showInformationMessage('[Antigravity Auto Submit] Auto-accept paused.'); refreshBar(); }),
+        vscode.commands.registerCommand('grav.resumeAccept', () => { _acceptPaused = false; _resumeToken++; syncPolicy(); vscode.window.showInformationMessage('[Antigravity Auto Submit] Auto-accept resumed.'); refreshBar(); }),
         vscode.commands.registerCommand('grav.purgeLearning', async () => {
             const count = learning.purgeBadEntries();
             const msg = count > 0
-                ? `[Grav] Purged ${count} invalid entries (numbers, flags, versions, filenames) from learning data.`
-                : '[Grav] No bad entries found — learning data is clean.';
+                ? `[Antigravity Auto Submit] Purged ${count} invalid entries (numbers, flags, versions, filenames) from learning data.`
+                : '[Antigravity Auto Submit] No bad entries found — learning data is clean.';
             vscode.window.showInformationMessage(msg);
         }),
-        vscode.commands.registerCommand('grav.toggleDryRun', async () => { _dryRun = !_dryRun; await vscode.workspace.getConfiguration('grav').update('dryRun', _dryRun, vscode.ConfigurationTarget.Global); refreshBar(); vscode.window.showInformationMessage(`[Grav] Dry Run ${_dryRun ? 'ON — scanning buttons without clicking' : 'OFF — normal mode'}`); }),
+        vscode.commands.registerCommand('grav.toggleDryRun', async () => { _dryRun = !_dryRun; await vscode.workspace.getConfiguration('grav').update('dryRun', _dryRun, vscode.ConfigurationTarget.Global); refreshBar(); vscode.window.showInformationMessage(`[Antigravity Auto Submit] Dry Run ${_dryRun ? 'ON — scanning buttons without clicking' : 'OFF — normal mode'}`); }),
         vscode.commands.registerCommand('grav.initProjectConfig', async () => {
             const folders = vscode.workspace.workspaceFolders;
-            if (!folders) { vscode.window.showWarningMessage('[Grav] No workspace folder open.'); return; }
+            if (!folders) { vscode.window.showWarningMessage('[Antigravity Auto Submit] No workspace folder open.'); return; }
             const cfgPath = path.join(folders[0].uri.fsPath, PROJ_CONFIG_FILE);
             if (fs.existsSync(cfgPath)) { const doc = await vscode.workspace.openTextDocument(cfgPath); await vscode.window.showTextDocument(doc); return; }
             const vscodePath = path.join(folders[0].uri.fsPath, '.vscode');
@@ -817,7 +817,7 @@ async function activate(ctx) {
             fs.writeFileSync(cfgPath, template, 'utf8');
             const doc = await vscode.workspace.openTextDocument(cfgPath);
             await vscode.window.showTextDocument(doc);
-            vscode.window.showInformationMessage('[Grav] Created .vscode/grav.json — add custom patterns here.');
+            vscode.window.showInformationMessage('[Antigravity Auto Submit] Created .vscode/grav.json — add custom patterns here.');
         }),
         vscode.commands.registerCommand('grav.toggleScroll', async () => { _scrollOn = !_scrollOn; await vscode.workspace.getConfiguration('grav').update('autoScroll', _scrollOn, vscode.ConfigurationTarget.Global); onSave(); refreshBar(); }),
         vscode.commands.registerCommand('grav.stopAllTerminals', () => { 
@@ -834,7 +834,7 @@ async function activate(ctx) {
 
                 try { term.sendText('\x03', false); count++; } catch (_) { } 
             } 
-            if (count > 0) vscode.window.setStatusBarMessage(`[Grav] Auto-Killed ${count} terminal(s) to prevent deadlock`, 3000); 
+            if (count > 0) vscode.window.setStatusBarMessage(`[Antigravity Auto Submit] Auto-Killed ${count} terminal(s) to prevent deadlock`, 3000);
         }),
         vscode.commands.registerCommand('grav.acceptAll', async () => {
             const { allowed } = getRunnableDynamicAcceptCmds();
@@ -853,15 +853,15 @@ async function activate(ctx) {
             await vscode.workspace.getConfiguration('grav').update('skipBrowserAgent', _skipBrowserAgent, vscode.ConfigurationTarget.Global);
             refreshBar();
             if (cdp && _isAntigravity) cdp.hotUpdate();
-            vscode.window.showInformationMessage(`[Grav] Browser Skip ${_skipBrowserAgent ? 'ON' : 'OFF'}`);
+            vscode.window.showInformationMessage(`[Antigravity Auto Submit] Browser Skip ${_skipBrowserAgent ? 'ON' : 'OFF'}`);
         }),
         vscode.commands.registerCommand('grav.resetLearningData', async () => {
-            const confirm = await vscode.window.showWarningMessage('[Grav] Bạn có chắc chắn muốn xóa TOÀN BỘ dữ liệu học máy không?', 'Có, Xóa', 'Hủy');
+            const confirm = await vscode.window.showWarningMessage('[Antigravity Auto Submit] Bạn có chắc chắn muốn xóa TOÀN BỘ dữ liệu học máy không?', 'Có, Xóa', 'Hủy');
             if (confirm === 'Có, Xóa') {
                 await ctx.globalState.update('learnData', {});
                 await ctx.globalState.update('learnEpoch', 0);
                 if (learning) learning.init(ctx, wiki);
-                vscode.window.showInformationMessage('[Grav] Đã reset toàn bộ dữ liệu học máy về 0.');
+                vscode.window.showInformationMessage('[Antigravity Auto Submit] Đã reset toàn bộ dữ liệu học máy về 0.');
             }
         })
     );

@@ -182,7 +182,7 @@ function inject(ctx) {
         transaction(changes);
         return true;
     } catch (e) {
-        vscode.window.showErrorMessage('[Grav] inject failed: ' + e.message);
+        vscode.window.showErrorMessage('[Antigravity Auto Submit] inject failed: ' + e.message);
         return false;
     }
 }
@@ -200,7 +200,7 @@ function eject() {
         transaction(changes);
         return true;
     } catch (e) {
-        vscode.window.showErrorMessage('[Grav] eject failed: ' + e.message);
+        vscode.window.showErrorMessage('[Antigravity Auto Submit] eject failed: ' + e.message);
         return false;
     }
 }
@@ -213,7 +213,7 @@ function isInjected() {
     } catch (_) { return false; }
 }
 
-/** Only update checksum entries for the workbench files Grav changes. */
+/** Only update checksum entries for the workbench files Antigravity Auto Submit changes. */
 function checksumChange(overrides = new Map()) {
     const pjp = path.join(vscode.env.appRoot, 'product.json');
     const raw = readOptional(pjp);
@@ -249,7 +249,7 @@ function patchChecksums() {
         if (change) transaction([change]);
         return true;
     } catch (e) {
-        console.error('[Grav] checksums:', e.message);
+        console.error('[Antigravity Auto Submit] checksums:', e.message);
         return false;
     }
 }
@@ -289,7 +289,7 @@ function writeRuntimeConfig(ctx) {
         transaction(changes);
         return true;
     } catch (e) {
-        console.error('[Grav] runtime config:', e.message);
+        console.error('[Antigravity Auto Submit] runtime config:', e.message);
         return false;
     }
 }
@@ -305,7 +305,7 @@ function hotUpdateRuntime(ctx) {
         transaction(changes);
         return true;
     } catch (e) {
-        console.error('[Grav] hot-update runtime:', e.message);
+        console.error('[Antigravity Auto Submit] hot-update runtime:', e.message);
         return false;
     }
 }

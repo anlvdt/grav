@@ -1,8 +1,8 @@
 {
     "name": "grav",
-    "displayName": "Antigravity Auto Accept — Grav (Auto Approve / Auto Run)",
-    "description": "Auto accept edits and auto approve supported Run prompts in Antigravity IDE with configurable terminal rules, dry run and auto scroll.",
-    "version": "4.0.21",
+    "displayName": "Antigravity Auto Submit",
+    "description": "Auto submit supported agent approvals in Antigravity IDE: auto accept edits, auto run permitted commands, configurable rules, dry run and auto scroll.",
+    "version": "4.0.22",
     "icon": "icons/icon.png",
     "publisher": "ANLE",
     "author": {
@@ -21,6 +21,8 @@
     "keywords": [
         "antigravity",
         "antigravity auto accept",
+        "antigravity auto submit",
+        "auto submit",
         "auto accept",
         "auto-accept",
         "auto approve",
@@ -57,95 +59,95 @@
         "commands": [
             {
                 "command": "grav.dashboard",
-                "title": "Grav: Dashboard"
+                "title": "Antigravity Auto Submit: Dashboard"
             },
             {
                 "command": "grav.diagnostics",
-                "title": "Grav: Diagnostics"
+                "title": "Antigravity Auto Submit: Diagnostics"
             },
             {
                 "command": "grav.manageTerminal",
-                "title": "Grav: Manage Terminal Commands (Whitelist/Blacklist)"
+                "title": "Antigravity Auto Submit: Manage Terminal Commands (Whitelist/Blacklist)"
             },
             {
                 "command": "grav.learnStats",
-                "title": "Grav: View Learning Stats"
+                "title": "Antigravity Auto Submit: View Learning Stats"
             },
             {
                 "command": "grav.refreshObserver",
-                "title": "Grav: Refresh Observer (Force re-inject)"
+                "title": "Antigravity Auto Submit: Refresh Observer (Force re-inject)"
             },
             {
                 "command": "grav.forceReconnect",
-                "title": "Grav: Force Reconnect CDP"
+                "title": "Antigravity Auto Submit: Force Reconnect CDP"
             },
             {
                 "command": "grav.pauseAccept",
-                "title": "Grav: Pause Auto-Accept"
+                "title": "Antigravity Auto Submit: Pause Auto-Accept"
             },
             {
                 "command": "grav.toggleScroll",
-                "title": "Grav: Toggle Auto-Scroll"
+                "title": "Antigravity Auto Submit: Toggle Auto-Scroll"
             },
             {
                 "command": "grav.resumeAccept",
-                "title": "Grav: Resume Auto-Accept"
+                "title": "Antigravity Auto Submit: Resume Auto-Accept"
             },
             {
                 "command": "grav.stopAllTerminals",
-                "title": "Grav: Stop All Terminals"
+                "title": "Antigravity Auto Submit: Stop All Terminals"
             },
             {
                 "command": "grav.acceptAll",
-                "title": "Grav: Force Accept All"
+                "title": "Antigravity Auto Submit: Force Accept All"
             },
             {
                 "command": "grav.toggleDryRun",
-                "title": "Grav: Toggle Dry Run (scan without clicking)"
+                "title": "Antigravity Auto Submit: Toggle Dry Run (scan without clicking)"
             },
             {
                 "command": "grav.initProjectConfig",
-                "title": "Grav: Init Project Config (.vscode/grav.json)"
+                "title": "Antigravity Auto Submit: Init Project Config (.vscode/grav.json)"
             },
             {
                 "command": "grav.purgeLearning",
-                "title": "Grav: Purge Bad Learning Data"
+                "title": "Antigravity Auto Submit: Purge Bad Learning Data"
             },
             {
                 "command": "grav.resetLearningData",
-                "title": "Grav: Factory Reset Learning Data"
+                "title": "Antigravity Auto Submit: Factory Reset Learning Data"
             },
             {
                 "command": "grav.toggleSkipBrowserAgent",
-                "title": "Grav: Toggle Skip Browser Agent"
+                "title": "Antigravity Auto Submit: Toggle Skip Browser Agent"
             },
             {
                 "command": "grav.applyOperationPreset",
-                "title": "Grav: Apply Operation Preset"
+                "title": "Antigravity Auto Submit: Apply Operation Preset"
             },
             {
                 "command": "grav.recordFalsePositive",
-                "title": "Grav: Record False Positive"
+                "title": "Antigravity Auto Submit: Record False Positive"
             },
             {
                 "command": "grav.recordMissedAction",
-                "title": "Grav: Record Missed Click"
+                "title": "Antigravity Auto Submit: Record Missed Click"
             },
             {
                 "command": "grav.removeRuntime",
-                "title": "Grav: Remove Injected Runtime"
+                "title": "Antigravity Auto Submit: Remove Injected Runtime"
             },
             {
                 "command": "grav.setScanSpeed",
-                "title": "Grav: Set Scan Speed (permissions unchanged)"
+                "title": "Antigravity Auto Submit: Set Scan Speed (permissions unchanged)"
             },
             {
                 "command": "grav.permissionProfile",
-                "title": "Grav: Select Permission Profile"
+                "title": "Antigravity Auto Submit: Select Permission Profile"
             },
             {
                 "command": "grav.configureAutopilot",
-                "title": "Grav: Configure Autopilot Profile (One-Time Setup)"
+                "title": "Antigravity Auto Submit: Configure Autopilot Profile (One-Time Setup)"
             }
         ],
         "keybindings": [
@@ -167,12 +169,12 @@
             }
         ],
         "configuration": {
-            "title": "Grav",
+            "title": "Antigravity Auto Submit",
             "properties": {
                 "grav.enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable or disable Grav entirely."
+                    "description": "Enable or disable Antigravity Auto Submit entirely."
                 },
                 "grav.autoScroll": {
                     "type": "boolean",
@@ -188,7 +190,7 @@
                         "custom"
                     ],
                     "default": "custom",
-                    "description": "Legacy combined presets (labels, scan/scroll settings and browser skipping). Use Grav: Set Scan Speed for speed-only changes and Grav: Select Permission Profile for permissions."
+                    "description": "Legacy combined presets (labels, scan/scroll settings and browser skipping). Use Antigravity Auto Submit: Set Scan Speed for speed-only changes and Antigravity Auto Submit: Select Permission Profile for permissions."
                 },
                 "grav.presetMode": {
                     "type": "string",
@@ -255,7 +257,7 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Commands Grav will not auto-approve; host execution permissions are unchanged. Takes priority over grants. Supports boundary-aware literal patterns and /regex/ rules."
+                    "description": "Commands Antigravity Auto Submit will not auto-approve; host execution permissions are unchanged. Takes priority over grants. Supports boundary-aware literal patterns and /regex/ rules."
                 },
                 "grav.learnEnabled": {
                     "type": "boolean",
@@ -293,7 +295,7 @@
                 "grav.skipBrowserAgent": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Skip auto-click when Browser Agent is active. Pauses Grav when Antigravity triggers a browser/computer-use agent."
+                    "description": "Skip auto-click when Browser Agent is active. Pauses Antigravity Auto Submit when Antigravity triggers a browser/computer-use agent."
                 },
                 "grav.permissionProfile": {
                     "type": "string",
@@ -312,7 +314,7 @@
                         "type": "object"
                     },
                     "default": [],
-                    "description": "Explicit Grav exact/prefix argv rules with scope and expiry. Use Manage Terminal for preview, create, revoke and history. Session rules are memory-only; project rules bind to the recorded workspace. Host permissions are unchanged."
+                    "description": "Explicit Antigravity Auto Submit exact/prefix argv rules with scope and expiry. Use Manage Terminal for preview, create, revoke and history. Session rules are memory-only; project rules bind to the recorded workspace. Host permissions are unchanged."
                 },
                 "grav.autopilotProfile": {
                     "type": "object",
@@ -391,7 +393,7 @@
                         "enabled": false
                     },
                     "additionalProperties": false,
-                    "description": "Automatic Retry/Resume clicks. Disabled by default. When enabled, Grav clicks Retry, Try Again, Resume or Resume Conversation at most maxPerConversation times per host conversation (1-8). Quota waits are not retries and never consume the budget.",
+                    "description": "Automatic Retry/Resume clicks. Disabled by default. When enabled, Antigravity Auto Submit clicks Retry, Try Again, Resume or Resume Conversation at most maxPerConversation times per host conversation (1-8). Quota waits are not retries and never consume the budget.",
                     "properties": {
                         "enabled": {
                             "type": "boolean",
@@ -516,6 +518,7 @@
         "build": "node scripts/package.js",
         "verify:vsix": "node scripts/verify-vsix.js",
         "test:webview": "node test/dashboard-webview.browser.js",
+        "test:input": "node test/trusted-input.browser.js",
         "pilot:replay": "node scripts/replay-pilot.js"
     },
     "dependencies": {
